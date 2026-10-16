@@ -1,0 +1,9 @@
+# NGC 25.12 is an ARM64/SM121-compatible PyTorch 2.10 CUDA 13.1 base.
+# Use --platform linux/arm64 when building on DGX Spark.
+FROM nvcr.io/nvidia/pytorch:25.12-py3
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace/modded-nanogpt
+COPY requirements_gb10.txt /tmp/requirements_gb10.txt
+RUN python -m pip install -r /tmp/requirements_gb10.txt
+# Do not COPY the data: mount the repository and FineWeb shards at runtime.
+CMD ["bash"]
