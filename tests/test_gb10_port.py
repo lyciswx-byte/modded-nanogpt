@@ -74,7 +74,7 @@ class CpuGb10MathTests(unittest.TestCase):
         head = nn.Linear(32, 257, bias=False)
         x = torch.randn(1, 29, 32)
         t = torch.randint(0, 257, (29,))
-        dense = head(x)
+        dense = head(x).view(-1, 257)
         expected = F.cross_entropy((23 * torch.sigmoid((dense + 5) / 7.5)).float(),
                                    t, reduction="none")
         actual = chunked_eval_ce(x, t, head, chunk_rows=7)
