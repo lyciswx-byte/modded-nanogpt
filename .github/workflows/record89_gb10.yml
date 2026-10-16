@@ -1,0 +1,25 @@
+name: Record 89 GB10 offline checks
+
+on:
+  push:
+    branches: [1xgb10]
+  pull_request:
+    branches: [1xgb10]
+
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check all Python files parse without loading CUDA
+        run: python -m compileall -q train_gpt.py triton_kernels.py dc_triton_kernels.py gb10_attention.py gb10_eval.py scripts tests
+      - name: Check one-device launch shell
+        run: bash -n run.sh
+      - name: Run GB10 static guards
+        run: python -m unittest discover -s tests -p 'test_gb10_port.py' -v
+      - name: Verify FineWeb parser still works
+        run: python -m unittest discover -s tests -p 'test_preflight_1xh100.py' -v
