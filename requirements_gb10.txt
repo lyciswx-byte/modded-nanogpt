@@ -1,0 +1,11 @@
+# Use NVIDIA's ARM64 DGX Spark PyTorch 25.12 image, which already contains
+# a compatible CUDA 13.1 / PyTorch 2.10 / Triton stack.
+# Do NOT pip install torch==2.10 from the old requirements.txt:
+# that would overwrite NGC's NVIDIA build with an incompatible wheel.
+numpy
+tqdm
+huggingface-hub
+datasets
+tiktoken
+setuptools
+typing-extensions
