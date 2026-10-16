@@ -8,7 +8,7 @@ import platform
 import sys
 from pathlib import Path
 
-from scripts.preflight_1xh100 import PreflightError, check_data_files
+from preflight_1xh100 import PreflightError, check_data_files
 
 
 def is_gb10_device(name: str, capability: tuple[int, int]) -> bool:
