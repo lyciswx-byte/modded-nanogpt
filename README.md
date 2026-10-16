@@ -1,5 +1,14 @@
 # Modded-NanoGPT
 
+> **1xH100 development branch — Record #89.**
+> This branch starts from the historical #89 trainer rather than the current
+> ANVIL2 (#92) master. For one-GPU setup, data checks, the development-only
+> smoke test and reproduction caveats, read [README_1xH100.md](README_1xH100.md).
+> `bash run.sh` on this branch launches **one H100**, not the eight GPUs used
+> to establish the historical speed records. The older commands below are
+> retained as upstream background documentation.
+
+
 This repository hosts the *NanoGPT speedrun*, in which we (collaboratively|competitively) search for the fastest algorithm to use 8 NVIDIA H100 GPUs to train a language model that attains 3.28 cross-entropy loss on the [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) validation set.
 
 (Note: Besides the main track, there is also an [optimization track](records/track_3_optimization) where we try to minimize steps subject to fixed arch/data/bsz and with unlimited wallclock budget.)
