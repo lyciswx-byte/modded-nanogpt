@@ -36,8 +36,8 @@ import torch.distributed as dist
 import torch.nn.functional as F
 
 # torch._inductor.config.coordinate_descent_tuning = True # we have banned this flag for new records because it causes compilation to take 30min
-from kernels import get_kernel
 from torch import Tensor, nn
+from gb10_eval import chunked_eval_ce
 
 from triton_kernels import XXT, XTX, ba_plus_cAA, FusedLinearReLUSquareFunction, FusedSoftcappedCrossEntropy, quantize_transpose_mlp_down_weights, reduce_mlp_activation_scales, transpose_add, transpose_copy
 from dc_triton_kernels import (
@@ -1066,7 +1066,11 @@ class AttnArgs:
     xsa_alpha: torch.Tensor | None
     train_max_seq_len: torch.Tensor
 
-flash_attn_interface = get_kernel('kernels-community/flash-attn3', version=1).flash_attn_interface
+# Hopper FA3 binaries do not target SM121 (GB10). Use the documented
+# Blackwell FlexAttention adapter; avoid importing the Hopper kernel loader.
+from types import SimpleNamespace
+from gb10_attention import flash_attn_varlen_func as gb10_flash_attn_varlen_func
+flash_attn_interface = SimpleNamespace(flash_attn_varlen_func=gb10_flash_attn_varlen_func)
 
 
 def dc_gate(
@@ -1686,10 +1690,13 @@ class GPT(nn.Module):
             prefix_target_seq = self.prefix_table[target_seq]
             loss_per_token = FusedSoftcappedCrossEntropy.apply(x.view(-1, x.size(-1)), target_seq, mtp_weights, prefix_target_seq, prefix_weight, self.lm_head.weight, self.lm_head.x_s, self.lm_head.w_s, self.lm_head.grad_s, grad_scale)
         else:
-            logits = self.lm_head(x)
-            logits = 23 * torch.sigmoid((logits + 5) / 7.5)
-            logits_for_loss = logits.float()
-            loss_per_token = F.cross_entropy(logits_for_loss.view(-1, logits_for_loss.size(-1)), target_seq, reduction="none")
+            # GB10 unified memory: never materialize 262144 x 50304 logits.
+            # Chunk only the CE projection, keeping the same attention context,
+            # token stream, loss math and target labels as Record #89.
+            loss_per_token = chunked_eval_ce(
+                x, target_seq, self.lm_head,
+                chunk_rows=int(os.environ.get("RECORD89_GB10_EVAL_CHUNK", "2048"))
+            )
         return loss_per_token
 # -----------------------------------------------------------------------------
 # Distributed data loader
@@ -2257,7 +2264,12 @@ for param in model.parameters():
 dist.broadcast(model.bigram_sign_table, 0)  # buffer, not in parameters()
 model.quantize_mlp_fp8(bootstrap_down=True)
 
-model: nn.Module = torch.compile(model, dynamic=False, fullgraph=True)
+# GB10 default: eager model + individually compiled FlexAttention kernel.
+# The Record #89 fullgraph compile relies on Hopper kernels and is not yet
+# validated on sm_121. Opt-in compile after the GB10 kernel smoke succeeds.
+raw_model = model
+if os.environ.get("RECORD89_GB10_COMPILE", "0") == "1":
+    model = torch.compile(model, dynamic=False, fullgraph=False)
 training_manager = TrainingManager(model)
 
 
@@ -2280,7 +2292,7 @@ for step in warmup_steps:
     model.eval()
     with torch.no_grad():
         inputs, targets, cum_seqlens, bigram_inputs, _ = next(val_loader)
-        model(inputs, targets, cum_seqlens, bigram_inputs, training_manager.get_forward_args()).mean()
+        raw_model(inputs, targets, cum_seqlens, bigram_inputs, training_manager.get_forward_args()).mean()
     model.train()
     for idx in range(grad_accum_steps):
         send_args = training_manager.train_loader_send_args
@@ -2344,7 +2356,7 @@ for step in range(train_steps + 1):
         with torch.no_grad():
             for _ in range(val_steps):
                 inputs, targets, cum_seqlens, bigram_inputs, _ = next(val_loader)
-                val_loss += model(inputs, targets, cum_seqlens, bigram_inputs, training_manager.get_forward_args()).mean()
+                val_loss += raw_model(inputs, targets, cum_seqlens, bigram_inputs, training_manager.get_forward_args()).mean()
         val_loss /= val_steps
         del val_loader
         dist.reduce(val_loss, 0, op=dist.ReduceOp.AVG)
