@@ -17,9 +17,10 @@
 - The modern `master` / `wxdev` branch contains **ANVIL2 (#92)** and is
   intentionally not used as the starting point here.
 
-We deliberately keep the historical `train_gpt.py`, `triton_kernels.py`,
-`dc_triton_kernels.py`, training schedule and loss code unchanged, so that
-single-GPU changes do not silently modify the training algorithm.
+We keep the historical model, optimizer, kernels, training schedule and loss
+math unchanged. The only addition to `train_gpt.py` is an **opt-in**
+`RECORD89_DEV_STEPS` early-stop guard for smoke tests; with that variable unset,
+the default 1285-step Record #89 training path is unchanged.
 
 ## What changes on one GPU?
 
@@ -110,6 +111,15 @@ from the same virtual environment. If you want GPU 2 rather than GPU 0,
 use `CUDA_VISIBLE_DEVICES=2 bash run.sh`. Never expose two or more GPUs
 to this particular launcher.
 
+For a **development-only 2-step GPU smoke run**, use:
+
+```bash
+RECORD89_DEV_STEPS=2 CUDA_VISIBLE_DEVICES=0 bash run.sh
+```
+
+This still performs the historical warmup/compilation and final validation;
+it is useful for surfacing CUDA/optimizer failures, **not** for judging
+Record #89 training quality. Omit `RECORD89_DEV_STEPS` for the full run.
 The full default #89 schedule remains **1270 main steps + 15 extension
 steps = 1285 optimizer steps**. `val_loss_every=250` in the original code,
 and a full FineWeb validation also runs at the end. The target evaluation
@@ -178,5 +188,5 @@ effective batch and training loss, followed by a convergence test.
 ## Pointers
 
 - [Historical baseline commit](https://github.com/lyciswx-byte/modded-nanogpt/commit/75d6867a4adb4eaea071352444e8e1d37e308855)
-- [Record #89 historical benchmark history](https://github.com/lyciswx-byte/modded-nanogpt/blob/1xh100-dev/README.md)
+- [Record #89 run logs and statistics](https://github.com/lyciswx-byte/modded-nanogpt/tree/1xh100-dev/records/track_1_short/2026-07-17_FP8DownProjection/this_pr)
 - [Development branch](https://github.com/lyciswx-byte/modded-nanogpt/tree/1xh100-dev)
