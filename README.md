@@ -1,12 +1,14 @@
 # Modded-NanoGPT
 
-> **1xH100 development branch — Record #89.**
-> This branch starts from the historical #89 trainer rather than the current
-> ANVIL2 (#92) master. For one-GPU setup, data checks, the development-only
-> smoke test and reproduction caveats, read [README_1xH100.md](README_1xH100.md).
-> `bash run.sh` on this branch launches **one H100**, not the eight GPUs used
-> to establish the historical speed records. The older commands below are
-> retained as upstream background documentation.
+> **1xGB10 development branch — experimental Record #89 port.**
+> Derived from `1xh100-dev`, but targeting one NVIDIA GB10 (DGX Spark /
+> ARM64 / SM121), not Hopper H100. The main project, Record #89 model and
+> optimizer remain the historical baseline; see
+> [README_1xGB10.md](README_1xGB10.md) for the new FlexAttention backend,
+> bounded-memory validation, Docker/NGC setup, GPU acceptance checks and
+> unverified limitations. `bash run.sh` launches ONE GB10, not 8xH100.
+> The original upstream instructions below are historical and do not
+> describe the GB10 setup.
 
 
 This repository hosts the *NanoGPT speedrun*, in which we (collaboratively|competitively) search for the fastest algorithm to use 8 NVIDIA H100 GPUs to train a language model that attains 3.28 cross-entropy loss on the [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) validation set.
