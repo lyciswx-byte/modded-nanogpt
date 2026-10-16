@@ -2317,6 +2317,15 @@ t0 = time.perf_counter()
 model.prefix_table.copy_(build_prefix_table(model.vocab_size))
 # begin training
 train_steps = training_schedule.total_steps
+# Optional single-H100 development smoke test. With this variable unset, the
+# full Record #89 training path is untouched. The training schedule itself is
+# NOT shortened or rescaled; an early validation is NOT a benchmark result.
+_dev_steps = os.environ.get("RECORD89_DEV_STEPS")
+if _dev_steps is not None:
+    if not _dev_steps.isdecimal() or not (1 <= int(_dev_steps) <= train_steps):
+        raise ValueError(f"RECORD89_DEV_STEPS must be in [1, {train_steps}], got {_dev_steps!r}")
+    train_steps = int(_dev_steps)
+    print0(f"[DEV ONLY] Running {train_steps} training steps, not the Record #89 benchmark", console=True)
 for step in range(train_steps + 1):
     last_step = (step == train_steps)
     training_manager.advance_schedule(step)
