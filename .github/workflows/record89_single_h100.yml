@@ -1,0 +1,23 @@
+name: Record 89 single H100 offline checks
+
+on:
+  push:
+    branches: [1xh100-dev]
+  pull_request:
+    branches: [1xh100-dev]
+
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate Python syntax without importing CUDA
+        run: python -m compileall -q train_gpt.py triton_kernels.py dc_triton_kernels.py scripts tests
+      - name: Validate single-H100 shell launcher syntax
+        run: bash -n run.sh
+      - name: Run CPU-only FineWeb preflight unit tests
+        run: python -m unittest discover -s tests -p 'test_preflight_1xh100.py' -v
