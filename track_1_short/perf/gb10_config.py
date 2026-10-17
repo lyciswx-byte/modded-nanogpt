@@ -12,8 +12,10 @@ def gb10_target() -> bool:
 
 def gb10_mlp_backend() -> str:
     backend = os.environ.get("GB10_MLP_BACKEND", "bf16" if gb10_target() else "fp8").lower()
-    if backend not in ("bf16", "fp8"):
-        raise ValueError("GB10_MLP_BACKEND must be bf16 or fp8")
+    if backend not in ("bf16", "fp8", "fp8_sm121"):
+        raise ValueError("GB10_MLP_BACKEND must be bf16, fp8, or fp8_sm121")
+    if backend == "fp8_sm121" and not gb10_target():
+        raise ValueError("fp8_sm121 is supported only for NANOGPT_TARGET=gb10")
     return backend
 
 
