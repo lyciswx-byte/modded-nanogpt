@@ -1066,7 +1066,14 @@ class AttnArgs:
     xsa_alpha: torch.Tensor | None
     train_max_seq_len: torch.Tensor
 
-flash_attn_interface = get_kernel('kernels-community/flash-attn3', version=1).flash_attn_interface
+# [GB10 port] Record #89 pins the Hopper-only FA3 build from kernels-community.
+# This machine is a Blackwell GB10 (sm_121), which that kernel does not target,
+# so prefer the locally built flash_attn 2.8.3 varlen API. The call signature
+# used below is shared by both, so the training math is unchanged.
+try:
+    from flash_attn import flash_attn_interface
+except ImportError:
+    flash_attn_interface = get_kernel('kernels-community/flash-attn3', version=1).flash_attn_interface
 
 
 def dc_gate(
@@ -1136,7 +1143,11 @@ class CausalSelfAttention(nn.Module):
             max_len = 2 * max_len
 
         # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
-        y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
+        # [GB10 port] cu_seqlens_k is cloned because FA2 wraps this in an
+        # autograd.Function, and Dynamo cannot trace .apply() when the same
+        # tensor is passed to two inputs. Values are identical; FA3 (which
+        # registers a custom op) did not need this.
+        y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens.clone(),
                                                         max_seqlen_q=max_len, max_seqlen_k=max_len,
                                                         causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
         if dc_w is not None:

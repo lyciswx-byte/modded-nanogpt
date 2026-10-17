@@ -1170,10 +1170,16 @@ __global__ void ce_fwd_bwd_kernel(
 }
 """
 
+# [GB10 port] Record #89 compiles this kernel for Hopper (sm_90) only, which
+# fails to load on Blackwell ("no kernel image is available for execution on
+# the device"). Compile for the device actually present instead. The kernel
+# source itself is architecture-neutral.
+_compute_capability = "".join(str(v) for v in torch.cuda.get_device_capability())
+
 ce_fwd_bwd_kernel = torch.cuda._compile_kernel(
     CE_KERNEL_DECLS + CE_KERNEL_SOURCE,
     "ce_fwd_bwd_kernel",
-    compute_capability="90",
+    compute_capability=_compute_capability,
     cuda_include_dirs=["/usr/local/cuda/include/"],
     nvcc_options=["-lineinfo", "--use_fast_math"],
 )
