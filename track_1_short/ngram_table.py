@@ -39,6 +39,8 @@ in order, synchronously.
 Provenance: record #360 (ANVIL2): table size, two-channel layout, hashes, beta1 = 0 row-RMS Adam,
 the per-cycle row cache and pull, the period-4 cadence.
 """
+import os
+
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -51,7 +53,7 @@ from track_1_short.sharded_rows import RowOwners, RowPull, all_to_all_rows
 
 # 224x the 377,280-row bigram table of earlier records. Rows [0, V/2) are the bigram channel,
 # [V/2, V) the trigram channel. Divisible by 8 (the shard) and < 2**31 (row ids are int32).
-NGRAM_VOCAB_SIZE = int(__import__("os").environ.get("NGRAM_VOCAB_SIZE", 84_602_880 // SINGLE_GPU_STEP_SCALE))
+NGRAM_VOCAB_SIZE = int(os.environ.get("NGRAM_VOCAB_SIZE", 84_602_880 // SINGLE_GPU_STEP_SCALE))
 NGRAM_DIM = 768
 # The shared +-1 sign pool. A power of two, so `& (rows - 1)` is the non-negative remainder of the
 # wrapped int32 hash (values ~500-15000 gave similar results in the bigram record).
@@ -86,7 +88,7 @@ GRAD_ACCUM_DTYPE = torch.float16
 GRAD_WIRE_DTYPE = torch.bfloat16
 GRAD_MERGE_DTYPE = torch.bfloat16
 
-assert NGRAM_VOCAB_SIZE % 2 == 0 and NGRAM_VOCAB_SIZE < 2 ** 31
+assert 4 <= NGRAM_VOCAB_SIZE < 2 ** 31 and NGRAM_VOCAB_SIZE % 2 == 0, "NGRAM_VOCAB_SIZE must be even and >= 4"
 assert NGRAM_SIGN_POOL_ROWS & (NGRAM_SIGN_POOL_ROWS - 1) == 0
 # The last period-2 event (an odd step) is then followed by a whole period-4 cycle.
 assert NGRAM_ADAM_PERIOD4_START % 4 == 0
