@@ -25,6 +25,7 @@ from track_1_short.perf.kernels.mlp import (
     quantize_mlp_weights_dual,
     quantize_weights_dual_ntiles,
 )
+from track_1_short.perf.kernels.mlp_sm121 import SM121FP8MLPFunction
 from track_1_short.perf.kernels.ngram_embed import ngram_embedding
 from track_1_short.perf.kernels.sampled_cross_entropy import SampledSoftcappedCrossEntropy
 from track_1_short.perf.kernels.value_embed import value_embed_lookup
@@ -505,7 +506,6 @@ class GPT(nn.Module):
             # The SM121 eval path deliberately avoids Hopper TensorDescriptor/TMA.
             return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
         if ACTIVE_MLP_BACKEND == "fp8_sm121":
-            from track_1_short.perf.kernels.mlp_sm121 import SM121FP8MLPFunction
             return SM121FP8MLPFunction.apply(x_normed, c_fc, c_proj, *fp8_args)
         if fp8_args is None:
             return ReLUSqrdMLP(x_normed, c_fc, c_proj)
