@@ -8,6 +8,9 @@ from torch import Tensor, nn
 
 from track_1_short.model.attention import AttnArgs, CausalSelfAttention, Yarn
 from track_1_short.perf.gb10_config import gb10_mlp_backend
+
+# Read once before torch.compile: no os.environ access inside captured graphs.
+ACTIVE_MLP_BACKEND = gb10_mlp_backend()
 from track_1_short.model.layers import CastedLinearT, next_multiple_of_n, norm
 from track_1_short.ngram_table import NGRAM_SIGN_POOL_ROWS
 from track_1_short.perf.kernels.cross_entropy import (
@@ -498,7 +501,7 @@ class GPT(nn.Module):
 
     def _mlp(self, x_normed, c_fc, c_proj, fp8_args):
         """Switchable BF16 ATen MLP or original Triton TMA FP8 MLP."""
-        if gb10_mlp_backend() == "bf16":
+        if ACTIVE_MLP_BACKEND == "bf16":
             # No TMA descriptors or custom FP8 GEMM. Standard autograd supports
             # this branch through torch.compile and CUDA-graph capture.
             return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
@@ -569,7 +572,7 @@ class GPT(nn.Module):
         use_fp8 = self.training
         # Keep record #92's QKV and loss FP8 while offering a portable
         # BF16 MLP path for GB10's reduced per-block shared-memory capacity.
-        mlp_fp8 = use_fp8 and gb10_mlp_backend() == "fp8"
+        mlp_fp8 = use_fp8 and ACTIVE_MLP_BACKEND == "fp8"
         attn_f8_weights = self._attn_fp8_weights() if use_fp8 else None
         mlp_up_f8 = self._mlp_up_f8.unbind(0) if mlp_fp8 else None
 
