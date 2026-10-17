@@ -46,14 +46,14 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from track_1_short.config import SINGLE_GPU_STEP_SCALE
+from track_1_short.config import SINGLE_GPU_STEP_SCALE, TRAIN_WORLD_SIZE
 from track_1_short.perf.kernels.ngram_adam import adam_rows_, bring_rows_current, claim_rows
 from track_1_short.perf.kernels.row_scatter import scatter_add_rows
 from track_1_short.sharded_rows import RowOwners, RowPull, all_to_all_rows
 
 # 224x the 377,280-row bigram table of earlier records. Rows [0, V/2) are the bigram channel,
 # [V/2, V) the trigram channel. Divisible by 8 (the shard) and < 2**31 (row ids are int32).
-NGRAM_VOCAB_SIZE = int(os.environ.get("NGRAM_VOCAB_SIZE", 84_602_880 // SINGLE_GPU_STEP_SCALE))
+NGRAM_VOCAB_SIZE = int(os.environ.get("NGRAM_VOCAB_SIZE", 84_602_880 // (8 if TRAIN_WORLD_SIZE == 1 else 1)))
 NGRAM_DIM = 768
 # The shared +-1 sign pool. A power of two, so `& (rows - 1)` is the non-negative remainder of the
 # wrapped int32 hash (values ~500-15000 gave similar results in the bigram record).
