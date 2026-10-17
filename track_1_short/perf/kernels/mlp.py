@@ -17,6 +17,8 @@ Scales, all per-tensor fp32 (the caller in model/gpt.py owns and refreshes them)
 
 Provenance: bf16 kernel by @andrewbriand, @jrauvola; full-fp8 MLP from record #360 (ANVIL2).
 """
+import os
+
 import torch
 import triton
 import triton.language as tl
@@ -24,6 +26,15 @@ from triton.runtime.errors import OutOfResources
 from triton.tools.tensor_descriptor import TensorDescriptor
 
 from track_1_short.perf.kernels.transpose import transpose_copy
+from track_1_short.perf.gb10_config import gb10_target
+
+# The original Hopper TMA path remains intact for H100. GB10 FP8 MLP is
+# opt-in (GB10_MLP_BACKEND=fp8), and uses pointer-based SM121 kernels by default.
+ACTIVE_FP8_MLP_IMPL = os.environ.get(
+    "GB10_FP8_MLP_IMPL", "sm121" if gb10_target() else "hopper"
+).lower()
+if ACTIVE_FP8_MLP_IMPL not in ("sm121", "hopper"):
+    raise ValueError("GB10_FP8_MLP_IMPL must be sm121 or hopper")
 
 # Weight scales lag a step (see quantize_mlp_weights_dual), so they keep 12% headroom.
 WEIGHT_SCALE_HEADROOM = 1.12
@@ -240,6 +251,15 @@ def linear_relu_square(a, b, aux=None, a_f8=None, b_f8=None, dequant_scale_ptr=N
     dtype = a.dtype
     use_fp8 = b_f8 is not None
     FORWARD = aux is None
+    if use_fp8 and ACTIVE_FP8_MLP_IMPL == "sm121":
+        # Trace-safe, descriptor-free FP8 path: preserves the existing fused
+        # autograd arguments, including delayed post and dpre scales and
+        # row-major/transposed FP8 outputs for subsequent GEMMs.
+        from track_1_short.perf.kernels.sm121_fp8_mlp import fused_activation
+        return fused_activation(
+            a_f8, b_f8, dequant_scale_ptr, post_scale, post_amax,
+            aux=aux, dpre_scale=dpre_scale, dpre_amax=dpre_amax,
+        )
     NUM_SMS = torch.cuda.get_device_properties("cuda").multi_processor_count
     # One tile shape for both passes: the backward measured 0.3824 ms at 128x256, 0.4102 ms transposed.
     BLOCK_SIZE_M = 128
@@ -322,6 +342,16 @@ def prime_stage_cache():
     """Resolve num_stages for every linear_relu_square variant training reaches, by launching each
     once on one-tile inputs (shared-memory pressure depends only on the variant, not on M/N/K).
     Call once, before torch.compile traces the model."""
+    if ACTIVE_FP8_MLP_IMPL == "sm121":
+        from track_1_short.config import TRAINING_STAGES
+        from track_1_short.model.gpt import MLP_HIDDEN_DIM
+        from track_1_short.perf.kernels.sm121_fp8_mlp import prime_sm121_fp8_mlp
+        # The real default training shapes. Capture never performs autotuning,
+        # and overrides of GB10_MICROBATCH_DIVISOR are reflected here.
+        prime_sm121_fp8_mlp(
+            [(stage.batch_size, MLP_HIDDEN_DIM, 768) for stage in TRAINING_STAGES]
+        )
+        return
     dev = torch.device("cuda")
     M, N, K = (128, 256, 128)  # one (BLOCK_M, BLOCK_N) tile, one fp8 K-block
     num_sms = torch.cuda.get_device_properties(dev).multi_processor_count
