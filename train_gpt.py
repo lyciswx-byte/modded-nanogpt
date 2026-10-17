@@ -50,6 +50,8 @@ from track_1_short.ngram_table import (
     is_update_step,
     ngram_row_ids,
 )
+from track_1_short.perf.attention_backend import prime_attention_backend
+from track_1_short.perf.gb10_config import gb10_mlp_backend, gb10_target
 from track_1_short.perf.cuda_graphs.baked_addresses import assert_addresses_unchanged, baked_addresses
 from track_1_short.perf.cuda_graphs.capture_plan import plan_warmup, step_graph_key
 from track_1_short.perf.cuda_graphs.fp8_refresh_graphs import Fp8RefreshGraphs
@@ -117,6 +119,14 @@ def train_step(training_manager, step_graphs, row_prefetch, sampled_softmax, bat
 def main():
     args = Hyperparameters()
     env = setup_distributed()
+    if gb10_target():
+        cap = torch.cuda.get_device_capability(env.device)
+        if cap != (12, 1):
+            raise RuntimeError(f"NANOGPT_TARGET=gb10 expects compute capability 12.1, got {cap}")
+    # Fail before allocating the giant n-gram shard if attention cannot import.
+    backend = prime_attention_backend()
+    if env.master_process:
+        print(f"Attention backend={backend}; MLP backend={gb10_mlp_backend()}")
     if args.train_seed is not None:
         torch.manual_seed(args.train_seed)
 
@@ -180,7 +190,10 @@ def main():
     model.quantize_attn_fp8()
     model.quantize_mlp_fp8(refresh_lm=True)
     # The fused MLP kernel picks its pipeline depth by trial launch, which cannot run under compile.
-    prime_stage_cache()
+    if gb10_mlp_backend() == "fp8":
+        # The original FP8 MLP uses Hopper-style Triton TMA tensor descriptors.
+        # GB10 starts with portable BF16 unless explicitly opted in after probing.
+        prime_stage_cache()
 
     # Early steps train on a sampled softmax (see track_1_short/sampled_softmax.py).
     sampled_softmax = SampledSoftmax(
