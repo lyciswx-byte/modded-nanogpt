@@ -79,6 +79,51 @@ def _relative(actual, reference):
     return float((actual - reference).norm() / reference.norm().clamp_min(1e-6))
 
 
+def check_fused_quantized_reference():
+    """Check SM121 tl.dot+epilogue against independent cuBLASLt+PyTorch math.
+
+    Comparisons occur *before* downstream FP8 GEMMs, so they catch a layout,
+    scale or saturation bug that a loose end-to-end BF16 comparison could miss.
+    """
+    from track_1_short.perf.kernels.sm121_fp8_mlp import fused_activation
+
+    for m, n, k in ((128, 256, 128), (192, 320, 128), (256, 2816, 768)):
+        torch.manual_seed(1000 + m)
+        aa = (torch.randn(m, k, device="cuda") / 4).to(torch.float8_e4m3fn)
+        bb = (torch.randn(n, k, device="cuda") / 4).to(torch.float8_e4m3fn)
+        dq = torch.tensor([0.004], device="cuda")
+        ps = torch.tensor([0.02], device="cuda")
+        max_post = torch.zeros(1, device="cuda")
+        _, _, post, post_t = fused_activation(aa, bb, dq, ps, max_post)
+        ref_pre = torch._scaled_mm(
+            aa, bb.T, out_dtype=torch.bfloat16,
+            scale_a=torch.tensor(1.0, device="cuda"),
+            scale_b=dq, use_fast_accum=True)
+        ref_post = F.relu(ref_pre).square()
+        ref_quant = (ref_post.float() / ps).clamp(0, 448).to(torch.float8_e4m3fn)
+        assert _relative(post, ref_quant) < 0.09, "fused FP8 post disagrees with quantized GEMM reference"
+        torch.testing.assert_close(post_t.float(), post.T.float(), atol=0, rtol=0)
+        torch.testing.assert_close(max_post, ref_post.float().amax().reshape(1), atol=0.4, rtol=0.05)
+
+        gg = (torch.randn(m, k, device="cuda") / 4).to(torch.float8_e5m2)
+        w2 = (torch.randn(n, k, device="cuda") / 4).to(torch.float8_e4m3fn)
+        ds = torch.tensor([0.001], device="cuda")
+        grad_dequant = torch.tensor([0.003], device="cuda")
+        max_dpre = torch.zeros(1, device="cuda")
+        dpre, dpre_t = fused_activation(gg, w2, grad_dequant, ps, max_post,
+                                      aux=post, dpre_scale=ds, dpre_amax=max_dpre)
+        ref_dpost = torch._scaled_mm(
+            gg, w2.T, out_dtype=torch.bfloat16,
+            scale_a=torch.tensor(1.0, device="cuda"),
+            scale_b=grad_dequant, use_fast_accum=False)
+        ref_dpre = (2 * ref_dpost.float() * torch.sqrt(post.float() * ps)).bfloat16()
+        ref_dpre8 = (ref_dpre.float() / ds).clamp(-57344, 57344).to(torch.float8_e5m2)
+        assert _relative(dpre, ref_dpre8) < 0.11, "fused FP8 dpre disagrees with quantized GEMM reference"
+        torch.testing.assert_close(dpre_t.float(), dpre.T.float(), atol=0, rtol=0)
+        torch.testing.assert_close(max_dpre, ref_dpre.float().abs().amax().reshape(1), atol=0.4, rtol=0.05)
+        print(f"[ok] SM121 fused GEMM+epilogue vs quantized reference M={m},N={n},K={k}")
+
+
 def correctness():
     # Small and large-ish GEMMs exercise masked tails and both tensor layouts.
     for m, n, k in ((128, 256, 128), (192, 320, 128), (256, 2816, 768)):
@@ -139,6 +184,7 @@ def main():
         raise RuntimeError("Requires one SM121 NVIDIA GB10 GPU")
     if os.environ.get("GB10_MLP_BACKEND") != "fp8" or ACTIVE_FP8_MLP_IMPL != "sm121":
         raise RuntimeError("Set GB10_MLP_BACKEND=fp8 and GB10_FP8_MLP_IMPL=sm121")
+    check_fused_quantized_reference()
     correctness()
     if args.benchmark:
         benchmark(args.tokens)
