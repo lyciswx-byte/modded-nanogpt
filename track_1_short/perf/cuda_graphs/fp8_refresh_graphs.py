@@ -60,7 +60,7 @@ class Fp8RefreshGraphs:
 
     def __init__(self, model: nn.Module):
         self.model = model  # the uncompiled GPT: the host counter must be set on the module itself
-        self.mlp_enabled = ACTIVE_MLP_BACKEND == "fp8"
+        self.mlp_enabled = ACTIVE_MLP_BACKEND in ("fp8", "fp8_sm121")
         self.expected = {"attn", "mlp+lm_head"} | ({"mlp"} if self.mlp_enabled else set())
         buffers = dict(model.named_buffers())
         self.attn_outputs = {n: t for n, t in buffers.items() if n.startswith(ATTN_OUTPUT_PREFIXES)}
