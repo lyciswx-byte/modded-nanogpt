@@ -1,6 +1,7 @@
-"""NanoGPT speedrun, track 1: train a GPT-2 small-scale model to 3.28 FineWeb val loss on 8xH100.
+"""NanoGPT speedrun, record #92 single-H100 port, targeting 3.28 FineWeb validation loss.
 
-Launch: torchrun --standalone --nproc_per_node=8 train_gpt.py
+Launch: torchrun --standalone --nproc_per_node=1 train_gpt.py
+The validation target has not been measured for this variant; see SINGLE_H100.md.
 
 This file is the outline of the whole run. The model, optimizer, data and schedules live in
 the `track_1_short/` package; `track_1_short/perf/` holds the kernels and precision tricks that make it
@@ -153,7 +154,7 @@ def main():
         num_heads=6,
         head_dim=128,
         model_dim=768,
-        max_seq_len=val_tokens_per_rank,
+        max_seq_len=max(val_tokens_per_rank, MAX_CYCLE_STEPS * max_step_tokens),
         ngram_dim=NGRAM_DIM,
         world_size=env.world_size,
         device=env.device,
