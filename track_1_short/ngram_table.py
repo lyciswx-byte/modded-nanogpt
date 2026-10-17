@@ -254,6 +254,15 @@ class NgramTable:
         """Pulls for eval batches (device row ids): the want lists are built on the device and all
         batches' counts go in ONE exchange (record #360's batched validation fill). Not yet landed."""
         wants = [torch.unique(ids) for ids in row_id_batches]  # sorted
+        if self.world_size == 1:
+            # Every evaluation row is local: avoid a zero-count all_to_all_single.
+            pulls = []
+            for want in wants:
+                assert want.numel() <= self.cache.shape[0], "evaluation rows overflow ngram_cache"
+                empty = want[:0].to(torch.int32)
+                pulls.append(RowPull(want=want.to(torch.int32), lo=0, hi=want.numel(),
+                                     send_counts=[0], recv_counts=[0], peer_want=empty, asked=empty))
+            return pulls
         bounds = torch.from_numpy(self.owners.bounds).to(self.device)
         cuts = torch.stack([torch.searchsorted(w.to(torch.int64), bounds) for w in wants]).cpu().numpy()
         send = cuts[:, 1:] - cuts[:, :-1]              # [batches, world]
