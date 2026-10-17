@@ -58,6 +58,22 @@ class TestPortableFlexAttention(unittest.TestCase):
 
 
 class TestGB10Environment(unittest.TestCase):
+    def test_sm121_backend_requires_gb10_target(self):
+        from unittest.mock import patch
+        from track_1_short.perf.gb10_config import gb10_mlp_backend
+        with patch.dict(os.environ, {"NANOGPT_TARGET": "gb10",
+                                     "GB10_MLP_BACKEND": "fp8_sm121"}):
+            self.assertEqual(gb10_mlp_backend(), "fp8_sm121")
+        with patch.dict(os.environ, {"NANOGPT_TARGET": "h100",
+                                     "GB10_MLP_BACKEND": "fp8_sm121"}):
+            with self.assertRaisesRegex(ValueError, "only for"):
+                gb10_mlp_backend()
+        with patch.dict(os.environ, {"NANOGPT_TARGET": "gb10",
+                                     "GB10_MLP_BACKEND": "fake"}):
+            with self.assertRaisesRegex(ValueError, "must be"):
+                gb10_mlp_backend()
+
+
     def test_default_profile_does_not_modify_h100_profile(self):
         script = """
 import json
