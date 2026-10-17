@@ -17,9 +17,18 @@ The original MLP is `y = relu(x @ W1.T)^2 @ W2`, with a folded residual post-lam
 5. New pointer-based Triton **backward epilogue**: `2 * dpost * sqrt(post_f8 * delayed_post_scale)`, BF16 rounding, saturating E5M2 dpre, transpose, and delayed `dpre_amax` in one kernel.
 6. Existing `wg1_f8` and `dx_f8` produce dW1/dx. If post-lambda is folded, compute its gradient and apply its scaling exactly as the old custom autograd does.
 
-The original Hopper approach fused GEMM and epilogue in one custom TMA kernel. **This GB10 approach separates GEMM from the fused epilogue**, so the added intermediate BF16 traffic can make it slower. The tradeoff is a platform-compatible candidate with bounded tile sizes, shared-memory usage, and an isolated performance harness. It uses the existing model caches, FP8 refresh graphs, optimizer, CUDA graphs, schedules and sparse embeddings. The SM121 device check in `train_gpt.py` remains active.
+The original Hopper approach fused GEMM and epilogue in one custom TMA kernel. **This GB10 cuBLASLt approach separates GEMM from the fused epilogue**, so the added intermediate BF16 traffic can make it slower. The tradeoff is a platform-compatible candidate with bounded tile sizes, shared-memory usage, and an isolated performance harness. It uses the existing model caches, FP8 refresh graphs, optimizer, CUDA graphs, schedules and sparse embeddings. The SM121 device check in `train_gpt.py` remains active.
 
-The existing `fp8` name still denotes the **original Hopper-style MLP**. The new backend is explicitly named `fp8_sm121`; the two are not aliases.
+**Two SM121 FP8 options now coexist on this branch.** `GB10_MLP_BACKEND=fp8`
+with `GB10_FP8_MLP_IMPL=sm121` selects a second, pointer-based **fused
+Triton FP8 GEMM + activation** backend in `sm121_fp8_mlp.py`, tuned eagerly
+with `GB10_FP8_MLP_AUTOTUNE=1` / `0`. `GB10_MLP_BACKEND=fp8_sm121`
+selects the **cuBLASLt FP8 GEMM + fused epilogue** backend described here,
+with the 6-tile sweep. `GB10_FP8_MLP_IMPL=hopper` explicitly restores
+the legacy Hopper TMA variant and is **not recommended** for GB10.
+Both new implementations are experimental; the faster GB10 choice is unknown.
+Benchmark them with equal inputs/shapes and include memory and graph-capture
+validation before selection.
 
 ## Native GB10 commands
 
@@ -95,4 +104,4 @@ Do not assume a full-run result exists. Record the actual final CE, wall time, t
 - If FP8 MLP quality worsens relative to BF16, keep BF16 default and investigate scale histories / rounding before promoting the backend.
 - If `torch._scaled_mm` itself is the dominant bottleneck on SM121, profile native CUTLASS/CuTe FP8 GEMM kernels and replace the GEMM behind a well-tested interface. No claim of an SM121-native fused TensorCore/TMA GEMM is made for the current code.
 
-Relevant source: `track_1_short/perf/kernels/mlp_sm121.py` (new Triton epilogues, autograd); `track_1_short/perf/kernels/mlp.py` (existing FP8 GEMM and cache quantizers); `tools/gb10_fp8_mlp_probe.py` (reference, compile, tune); `track_1_short/model/gpt.py` (backend dispatch); `track_1_short/perf/cuda_graphs/fp8_refresh_graphs.py` (refresh graphs).
+Relevant source: `track_1_short/perf/kernels/sm121_fp8_mlp.py` and `tools/gb10_fp8_mlp_bench.py` (second fused candidate); `track_1_short/perf/kernels/mlp_sm121.py` (new Triton epilogues, autograd); `track_1_short/perf/kernels/mlp.py` (existing FP8 GEMM and cache quantizers); `tools/gb10_fp8_mlp_probe.py` (reference, compile, tune); `track_1_short/model/gpt.py` (backend dispatch); `track_1_short/perf/cuda_graphs/fp8_refresh_graphs.py` (refresh graphs).
