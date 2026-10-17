@@ -1,2 +1,3 @@
-# Record #92 adapted for one NVIDIA H100 (see SINGLE_H100.md).
-torchrun --standalone --nproc_per_node=1 train_gpt.py
+#!/usr/bin/env bash
+# GB10 / DGX Spark entrypoint; H100 configuration remains on 92-1xH100.
+exec bash "$(dirname "$0")/run_gb10.sh"
