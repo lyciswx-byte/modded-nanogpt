@@ -132,7 +132,8 @@ class ValueEmbedPull:
         # A land still in flight would later overwrite the gathered rows with the same values, but
         # after the gather: the caller flushes first (DeferredGathers.flush).
         assert self.landing is None, "gather_replica with a replica land in flight"
-        dist.all_gather_into_tensor(self.param.data, self.param.data[self.own_rows])
+        if self.world_size > 1:
+            dist.all_gather_into_tensor(self.param.data, self.param.data[self.own_rows])
 
     # ---- the update event ----
 
