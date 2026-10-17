@@ -1,0 +1,100 @@
+
+=============
+== PyTorch ==
+=============
+
+NVIDIA Release 26.09 (build 442529826)
+PyTorch Version 2.14.0a0+b2c75dd
+Container image Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Copyright (c) 2014-2024 Facebook Inc.
+Copyright (c) 2011-2014 Idiap Research Institute (Ronan Collobert)
+Copyright (c) 2012-2014 Deepmind Technologies    (Koray Kavukcuoglu)
+Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
+Copyright (c) 2011-2013 NYU                      (Clement Farabet)
+Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
+Copyright (c) 2006      Idiap Research Institute (Samy Bengio)
+Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
+Copyright (c) 2015      Google Inc.
+Copyright (c) 2015      Yangqing Jia
+Copyright (c) 2013-2016 The Caffe contributors
+All rights reserved.
+
+Various files include modifications (c) NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+
+GOVERNING TERMS: The software and materials are governed by the NVIDIA Software License Agreement
+(found at https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/)
+and the Product-Specific Terms for NVIDIA AI Products
+(found at https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/).
+
+NOTE: CUDA Forward Compatibility mode ENABLED.
+  Using CUDA 13.4 driver version 615.71.09 with kernel driver version 580.178.04.
+  See https://docs.nvidia.com/deploy/cuda-compatibility/ for details.
+
+GPU=NVIDIA GB10 compute=(12, 1), RAM=121.6 GiB
+host=aarch64, torch=2.14.0a0+b2c75dd062.nv26.09, torch_cuda=13.4
+triton=3.8.0, visible GPUs=1
+TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+TORCH_CUDA_ARCH_LIST=12.0+PTX
+torch arch list=['sm_80', 'sm_86', 'sm_90', 'sm_100', 'sm_110', 'sm_120', 'compute_120']
+attention=flex, MLP=bf16
+/usr/local/lib/python3.12/dist-packages/torch/nn/attention/flex_attention.py:2596: UserWarning: flex_attention called without torch.compile() - this will use an unfused implementation that materializes the full scores matrix instead of generating a fused kernel.
+
+SOLUTION: Use torch.compile(flex_attention)(...)
+
+If you want to debug your score_mod/mask_mod, you can set:
+torch.nn.attention.flex_attention._FLEX_ATTENTION_DISABLE_COMPILE_DEBUG = True
+
+This will allow you to use print statements or breakpoints. Note: This doesn't work with the backwards pass and may produce incorrect results.
+  _warn_once(
+[ok] attention QK=64 V=128 paired=False, output + gradient reference
+[ok] attention QK=64 V=128 paired=True, output + gradient reference
+[ok] attention QK=128 V=64 paired=False, output + gradient reference
+[ok] attention QK=128 V=64 paired=True, output + gradient reference
+[ok] attention QK=64 V=64 paired=False, output + gradient reference
+[ok] attention QK=64 V=64 paired=True, output + gradient reference
+[ok] attention QK=128 V=128 paired=False, output + gradient reference
+[ok] attention QK=128 V=128 paired=True, output + gradient reference
+/usr/local/lib/python3.12/dist-packages/torch/autograd/graph.py:1072: UserWarning: The AccumulateGrad node's stream does not match the stream of the node that produced the incoming gradient. This may incur unnecessary synchronization and break CUDA graph capture if the AccumulateGrad node's stream is the default stream. This mismatch is caused by an AccumulateGrad node created prior to the current iteration being kept alive. This can happen if the autograd graph is still being kept alive by tensors such as the loss, or if you are using DDP, which will stash a reference to the node. To resolve the mismatch, delete all references to the autograd graph or ensure that DDP initialization is performed under the same stream as subsequent forwards. If the mismatch is intentional, you can use torch.autograd.graph.set_warn_on_accumulate_grad_stream_mismatch(False) to suppress this warning. (Triggered internally at /opt/pytorch/pytorch/torch/csrc/autograd/input_buffer.cpp:310.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[ok] compiled attention live batches + document boundaries, CUDA graph=True
+[ok] Triton SM121 JIT + launch
+[ok] cuBLAS scaled FP8 GEMM
+[ok] actual BF16 MLP vs FP32 reference: output L2 < 0.02, gradients L2 < 0.03
+[ok] n-gram signed gather + gradient sink: repeated/boundary IDs, bit-exact reference
+[ok] packed FP8 QKV+RoPE QK=64 V=128 paired=False offset=False
+[ok] packed FP8 QKV+RoPE QK=64 V=128 paired=True offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=64 paired=False offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=64 paired=True offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=64 paired=False offset=True
+[ok] packed FP8 QKV+RoPE QK=64 V=64 paired=False offset=False
+[ok] packed FP8 QKV+RoPE QK=64 V=64 paired=True offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=128 paired=False offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=128 paired=True offset=False
+[ok] packed FP8 QKV+RoPE QK=128 V=128 paired=False offset=True
+[ok] actual CE FP8 forward/backward width=50304; loss 2e-4, gradient relative L2 < 0.15
+[ok] actual CE FP8 forward/backward width=10240; loss 2e-4, gradient relative L2 < 0.15
+[ok] actual CE FP8 forward/backward width=14336; loss 2e-4, gradient relative L2 < 0.15
+[ok] actual CE FP8 forward/backward width=24576; loss 2e-4, gradient relative L2 < 0.15
+[ok] CE MTP=1 width=50304: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=2 width=50304: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=3 width=50304: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=1 width=10240: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=2 width=10240: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=3 width=10240: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=1 width=14336: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=2 width=14336: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=3 width=14336: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=1 width=24576: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=2 width=24576: truncated tail, repeated targets, prefix loss + gradients
+[ok] CE MTP=3 width=24576: truncated tail, repeated targets, prefix loss + gradients
+[ok] repeated sparse-row merge + single row Adam commit + lazy moment replay
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:2487: FutureWarning: `torch._prims_common.check` is deprecated and will be removed in the future. Please use `torch._check*` functions instead.
+  check(
+W1017 08:51:24.902000 1 torch/_inductor/utils.py:1797] [2/0] Not enough SMs to use max_autotune_gemm mode
+[ok] ANVIL twin-rail/cascade 128x64: momentum state + dense reference L2 < 0.12
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:2487: FutureWarning: `torch._prims_common.check` is deprecated and will be removed in the future. Please use `torch._check*` functions instead.
+  check(
+[ok] ANVIL twin-rail/cascade 64x128: momentum state + dense reference L2 < 0.12
+[ok] BF16 mode skips MLP quantizer, preserves bootstrap counter and bit-exact LM-head refresh
+[ok] BF16 refresh graphs capture/seal/replay live LM-head weights; no empty MLP graph
+GB10 operator probe passed; this is NOT an end-to-end training/convergence result.

@@ -897,12 +897,19 @@ class GPT(nn.Module):
         amax_buf.zero_()
 
     def quantize_mlp_fp8(self, refresh_lm: bool):
-        """Refresh the FP8 MLP weight caches and scales, and (if `refresh_lm`) the fp8 lm_head copies.
+        """Refresh active FP8 caches and (if `refresh_lm`) the FP8 lm_head copies.
 
+        BF16 MLP mode leaves unused MLP caches untouched. The refresh counter
+        still advances for the CUDA-graph bootstrap and replay protocol.
         lm_head only changes on Adam steps, so the caller passes refresh_lm=False after the others.
         """
         with torch.no_grad():
-            self._quantize_mlp_weights_and_scales()
+            if ACTIVE_MLP_BACKEND == "fp8":
+                self._quantize_mlp_weights_and_scales()
+            else:
+                # Keep the refresh/capture bootstrap clock in sync without launching
+                # unused TMA quantizers. The FP8 lm_head is still required below.
+                self.mlp_quantize_calls += 1
             if refresh_lm:
                 quantize_lm_head_dual(self.lm_head.weight, self._lm_head_f8_row, self._lm_head_f8_col, self._lm_head_inv_w_s)
 

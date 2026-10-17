@@ -118,6 +118,12 @@ def train_step(training_manager, step_graphs, row_prefetch, sampled_softmax, bat
 
 def main():
     args = Hyperparameters()
+    # Optional bounded diagnostic window; disabled in ordinary runs. Profiling
+    # overhead is on the training clock and must be disclosed with timings.
+    profile_steps = int(os.environ.get("GB10_PROFILE_STEPS", "0"))
+    profile_start = int(os.environ.get("GB10_PROFILE_START", "0"))
+    assert profile_steps >= 0 and profile_start >= 0
+    profiler = None
     env = setup_distributed()
     if gb10_target():
         cap = torch.cuda.get_device_capability(env.device)
@@ -401,9 +407,29 @@ def main():
             break
 
         # --------------- TRAINING SECTION -----------------
+        if profile_steps and step == profile_start:
+            profiler = torch.profiler.profile(activities=[
+                torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA,
+            ])
+            profiler.start()
         train_step(training_manager, step_graphs, row_prefetch, sampled_softmax, batches, deferred_gathers,
                    step, uncompiled_model.lm_head_f8_col, prefetch_next=step + 1 < training_schedule.total_steps)
         tail_averages.tick(step)
+        if profiler is not None and (step + 1 >= profile_start + profile_steps
+                                     or step + 1 == training_schedule.total_steps):
+            profiler.stop()
+            trace_path = f"logs/{args.run_id}.rank{env.rank}.profile.json"
+            profiler.export_chrome_trace(trace_path)
+            print0(f"Profile steps [{profile_start}, {step + 1}), trace={trace_path}; "
+                   "profiling overhead is included in training time", console=True)
+            print0(profiler.key_averages().table(sort_by="self_device_time_total", row_limit=30))
+            profiler = None
+
+        if step + 1 == training_schedule.total_steps:
+            # Read once at the end: the summed MTP/prefix training objective is
+            # distinct from full-vocabulary next-token validation CE.
+            final_objective = step_graphs.current.loss.item() / step_graphs.current.key.tokens
+            print0(f"final_train_objective_per_token:{final_objective:.6f}", console=True)
 
         # logging, thinned to every PRINT_EVERY steps and the last two
         if (step + 1) % PRINT_EVERY == 0 or step + 1 >= training_schedule.total_steps - 1:

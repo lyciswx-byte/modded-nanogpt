@@ -1,4 +1,4 @@
-"""CUDA graphs of the fp8 weight-cache refresh: one for the attention half, two for the MLP half.
+"""CUDA graphs of the fp8 weight-cache refresh: attention and active MLP/lm_head variants.
 
 What it replaces: model.quantize_attn_fp8() and model.quantize_mlp_fp8(refresh_lm) run eagerly after
 every optimizer step (perf/deferred_gathers.py runs them before the next forward): per width group an
@@ -23,6 +23,11 @@ Capture protocol: captured once, between two warmup steps after the exact-scale 
 (capture_plan.py); each of the three graphs is self-checked bitwise against the eager body at its first
 use, which the plan schedules before the warmup ends.
 
+GB10 BF16 exception: only attention and lm_head have FP8 consumers. The MLP-only
+variant is a host counter increment, with no graph; MLP buffers are excluded from
+snapshots/self-checks. The bootstrap clock still advances once per refresh, so
+capture planning and the post-warmup reset retain their existing invariants.
+
 Provenance: record #360 (ANVIL2): `_TailGraphs2` ("tgr2"). Deviation: no free-memory gate
 (TAIL_GRAPH2_FLOOR_MIB), as for the optimizer graphs.
 """
@@ -32,7 +37,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from track_1_short.model.gpt import FP8_EXACT_SCALE_CALLS
+from track_1_short.model.gpt import ACTIVE_MLP_BACKEND, FP8_EXACT_SCALE_CALLS
 from track_1_short.perf.cuda_graphs.capture_support import WARM_ITERATIONS, bits_equal, restore, snapshot
 
 # Buffer-name prefixes of what each half writes.
@@ -55,9 +60,12 @@ class Fp8RefreshGraphs:
 
     def __init__(self, model: nn.Module):
         self.model = model  # the uncompiled GPT: the host counter must be set on the module itself
+        self.mlp_enabled = ACTIVE_MLP_BACKEND == "fp8"
+        self.expected = {"attn", "mlp+lm_head"} | ({"mlp"} if self.mlp_enabled else set())
         buffers = dict(model.named_buffers())
         self.attn_outputs = {n: t for n, t in buffers.items() if n.startswith(ATTN_OUTPUT_PREFIXES)}
-        self.mlp_outputs = {n: t for n, t in buffers.items() if n.startswith(MLP_OUTPUT_PREFIXES)}
+        prefixes = MLP_OUTPUT_PREFIXES if self.mlp_enabled else ("_lm_head_f8_",)
+        self.mlp_outputs = {n: t for n, t in buffers.items() if n.startswith(prefixes)}
         assert self.attn_outputs and self.mlp_outputs
         self.captured: dict[str, CapturedRefresh] = {}  # "attn", "mlp", "mlp+lm_head"
         self.unchecked: set[str] = set()
@@ -67,6 +75,10 @@ class Fp8RefreshGraphs:
         self._refresh("attn", self.model.quantize_attn_fp8)
 
     def refresh_mlp(self, refresh_lm: bool):
+        if not self.mlp_enabled and not refresh_lm:
+            # No GPU work or graph replay is needed, but keep the bootstrap clock.
+            self.model.mlp_quantize_calls += 1
+            return
         self._refresh("mlp+lm_head" if refresh_lm else "mlp", lambda: self.model.quantize_mlp_fp8(refresh_lm=refresh_lm))
 
     def _refresh(self, name: str, body: Callable[[], None]):
@@ -85,15 +97,16 @@ class Fp8RefreshGraphs:
 
     @torch.no_grad()
     def capture(self):
-        """Record the three variants. Runs between steps; the state (buffers and host counter) is left as found."""
+        """Record the active variants. Runs between steps; the state (buffers and host counter) is left as found."""
         assert not self.captured, "the fp8 refresh graphs are captured once"
         # The captured body must be the delayed-scale one (see the header).
         assert self.model.mlp_quantize_calls >= FP8_EXACT_SCALE_CALLS, "fp8 refresh capture inside the bootstrap"
         stream = torch.cuda.Stream()
         m = self.model
-        variants = (("attn", m.quantize_attn_fp8, self.attn_outputs, 0),
-                    ("mlp", lambda: m.quantize_mlp_fp8(refresh_lm=False), self.mlp_outputs, 1),
-                    ("mlp+lm_head", lambda: m.quantize_mlp_fp8(refresh_lm=True), self.mlp_outputs, 1))
+        variants = [("attn", m.quantize_attn_fp8, self.attn_outputs, 0)]
+        if self.mlp_enabled:
+            variants.append(("mlp", lambda: m.quantize_mlp_fp8(refresh_lm=False), self.mlp_outputs, 1))
+        variants.append(("mlp+lm_head", lambda: m.quantize_mlp_fp8(refresh_lm=True), self.mlp_outputs, 1))
         everything = {**self.attn_outputs, **self.mlp_outputs}
         saved, calls = snapshot(everything), m.mlp_quantize_calls
         for name, body, outputs, bumps in variants:
@@ -128,6 +141,6 @@ class Fp8RefreshGraphs:
         assert not bad, f"fp8 refresh graph {captured.name}: replay != eager on {bad}"
 
     def seal(self):
-        assert set(self.captured) == {"attn", "mlp", "mlp+lm_head"}, f"fp8 refresh graphs missing: {sorted(self.captured)}"
+        assert set(self.captured) == self.expected, f"fp8 refresh graphs missing: {sorted(self.captured)}"
         assert not self.unchecked, f"fp8 refresh graphs never self-checked: {sorted(self.unchecked)}"
         self.sealed = True

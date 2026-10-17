@@ -215,7 +215,11 @@ __global__ void ce_fwd_bwd_kernel(
   float S_w = 0.0f;
 
   for (int i = 0; i < n_predict; i++) {
-    S_w += mtp_weights[i];
+    // Match the forward's truncated MTP objective at the final token rows.
+    // Missing future targets must not contribute softmax-normalizer gradient.
+    if (blockIdx.x + i < batch_size) {
+      S_w += mtp_weights[i];
+    }
   }
   int64_t ptgt_row = prefix_targets[blockIdx.x];
   if (ptgt_row >= 0) {
@@ -305,7 +309,9 @@ def compile_ce_kernel(vocab_size: int):
     kernel = torch.cuda._compile_kernel(
         decls + CE_KERNEL_SOURCE,
         "ce_fwd_bwd_kernel",
-        compute_capability="90",
+        # _compile_kernel emits a device binary; Hopper sm90 is not
+        # executable on GB10. Compile for the actual visible CUDA device.
+        compute_capability="%d%d" % torch.cuda.get_device_capability(),
         cuda_include_dirs=CUDA_INCLUDE_DIRS,
         nvcc_options=["-lineinfo", "--use_fast_math"],
     )
