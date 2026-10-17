@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from track_1_short.model.attention import AttnArgs, CausalSelfAttention, Yarn
+from track_1_short.perf.gb10_config import gb10_mlp_backend
 from track_1_short.model.layers import CastedLinearT, next_multiple_of_n, norm
 from track_1_short.ngram_table import NGRAM_SIGN_POOL_ROWS
 from track_1_short.perf.kernels.cross_entropy import (
@@ -496,8 +497,11 @@ class GPT(nn.Module):
         return x
 
     def _mlp(self, x_normed, c_fc, c_proj, fp8_args):
-        """relu(x @ c_fc.T)^2 @ c_proj; in FP8 (training) when `fp8_args` holds this slot's _mlp_fp8_args,
-        else bf16 (validation)."""
+        """Switchable BF16 ATen MLP or original Triton TMA FP8 MLP."""
+        if gb10_mlp_backend() == "bf16":
+            # No TMA descriptors or custom FP8 GEMM. Standard autograd supports
+            # this branch through torch.compile and CUDA-graph capture.
+            return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
         if fp8_args is None:
             return ReLUSqrdMLP(x_normed, c_fc, c_proj)
         return ReLUSqrdMLP(x_normed, c_fc, c_proj, *fp8_args)
@@ -563,8 +567,11 @@ class GPT(nn.Module):
 
         # FP8 is training-only; validation runs the bf16 path.
         use_fp8 = self.training
+        # Keep record #92's QKV and loss FP8 while offering a portable
+        # BF16 MLP path for GB10's reduced per-block shared-memory capacity.
+        mlp_fp8 = use_fp8 and gb10_mlp_backend() == "fp8"
         attn_f8_weights = self._attn_fp8_weights() if use_fp8 else None
-        mlp_up_f8 = self._mlp_up_f8.unbind(0) if use_fp8 else None
+        mlp_up_f8 = self._mlp_up_f8.unbind(0) if mlp_fp8 else None
 
         # ---- Unbind parameters (avoid select_backward kernels) ----
         sa_lambdas = self.scalars[: 2 * self.num_layers].view(-1, 2)
@@ -731,8 +738,8 @@ class GPT(nn.Module):
             mlp_in = norm(x)
             # fp8 only: the post-lambda is folded into the down-projection scale, so the MLP output
             # already carries it. Not on the MUDD layer, whose post-lambda mu[13] is per-token.
-            fold_p = post_lambdas_mlp[i] if use_fp8 and mu is None else None
-            if use_fp8:
+            fold_p = post_lambdas_mlp[i] if mlp_fp8 and mu is None else None
+            if mlp_fp8:
                 # One quantize of the input, shared with the parallel MLP.
                 x_f8 = quantize_dual_layout_fused(mlp_in.detach().view(-1, mlp_in.size(-1)), self._mlp_x_scale, fmt=torch.float8_e4m3fn)
                 fp8_args = self._mlp_fp8_args(i, mlp_up_f8[i], x_f8, fold_p)
@@ -748,7 +755,7 @@ class GPT(nn.Module):
             if i == PARALLEL_MLP_LAYER:
                 # Same input and the same post-lambda as the layer's own MLP.
                 k = PARALLEL_MLP_SLOT
-                parallel_args = self._mlp_fp8_args(k, mlp_up_f8[k], x_f8, fold_p) if use_fp8 else None
+                parallel_args = self._mlp_fp8_args(k, mlp_up_f8[k], x_f8, fold_p) if mlp_fp8 else None
                 parallel_out = self._mlp(mlp_in, mlp_fcs[k], mlp_projs[k], parallel_args)
                 x = x + (parallel_out if fold_p is not None else scale(post_lambdas_mlp[i], parallel_out))
 
