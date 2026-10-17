@@ -1,5 +1,12 @@
 # Modded-NanoGPT
 
+> **NVIDIA GB10 (DGX Spark) experimental port of record #92:** See [GB10.md](GB10.md).
+> Run it with [Dockerfile.gb10](Dockerfile.gb10) (NVIDIA NGC PyTorch 26.09,
+> ARM64/CUDA 13), check kernels with [tools/gb10_kernel_probe.py](tools/gb10_kernel_probe.py),
+> and start with `bash run.sh`. This port is **not yet validated on a physical GB10**.
+> FineWeb CE <= 3.28 and runtime are targets, not measured results.
+
+
 This repository hosts the *NanoGPT speedrun*, in which we (collaboratively|competitively) search for the fastest algorithm to use 8 NVIDIA H100 GPUs to train a language model that attains 3.28 cross-entropy loss on the [FineWeb](https://huggingface.co/datasets/HuggingFaceFW/fineweb) validation set.
 
 (Note: Besides the main track, there is also an [optimization track](records/track_3_optimization) where we try to minimize steps subject to fixed arch/data/bsz and with unlimited wallclock budget.)
