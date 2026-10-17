@@ -197,8 +197,9 @@ def main():
     model.quantize_mlp_fp8(refresh_lm=True)
     # The fused MLP kernel picks its pipeline depth by trial launch, which cannot run under compile.
     if gb10_mlp_backend() == "fp8":
-        # The original FP8 MLP uses Hopper-style Triton TMA tensor descriptors.
-        # GB10 starts with portable BF16 unless explicitly opted in after probing.
+        # Only the Hopper FP8 MLP needs TensorDescriptor pipeline stage priming.
+        # The GB10 fp8_sm121 backend uses cuBLASLt and tiled pointer-based
+        # Triton epilogues, avoiding the Hopper TMA kernel entirely.
         prime_stage_cache()
 
     # Early steps train on a sampled softmax (see track_1_short/sampled_softmax.py).
