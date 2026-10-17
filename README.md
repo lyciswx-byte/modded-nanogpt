@@ -74,6 +74,12 @@ Contributors list (growing with each new record): [@bozavlado](https://x.com/boz
 
 ## Running the current record
 
+> **Single H100 port of record #92 (experimental):** See [SINGLE_H100.md](SINGLE_H100.md).
+> This variant uses one H100, a smaller hashed n-gram table and more optimization steps;
+> its time and FineWeb loss have **not** been verified on GPU. Use `bash run.sh` on this
+> branch to launch a single process, not the original eight-process run.
+
+
 To run the current record, run the following commands.
 ```bash
 git clone https://github.com/KellerJordan/modded-nanogpt.git && cd modded-nanogpt
