@@ -205,7 +205,10 @@ def check_ngram_embedding():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--attention-only", action="store_true")
-    parser.add_argument("--check-fp8-mlp", action="store_true")
+    parser.add_argument("--check-fp8-mlp", action="store_true",
+                        help="probe selected FP8 MLP: legacy Hopper TMA or new SM121 backend")
+    parser.add_argument("--benchmark-sm121-fp8-mlp", action="store_true",
+                        help="benchmark SM121 FP8 MLP against BF16 (standalone, not end-to-end training)")
     parser.add_argument("--skip-compiled-attention", action="store_true",
                         help="debug eager operators only (not representative of trainer)")
     parser.add_argument("--capture-attention", action="store_true",
@@ -231,10 +234,21 @@ def main():
         check_anvil()
         if gb10_mlp_backend() == "bf16":
             check_bf16_refresh()
-    if args.check_fp8_mlp:
-        from track_1_short.perf.kernels.mlp import prime_stage_cache
-        prime_stage_cache()
-        print("[ok] FP8 TMA MLP stage kernel launches")
+    if args.check_fp8_mlp or args.benchmark_sm121_fp8_mlp:
+        if gb10_mlp_backend() == "fp8_sm121":
+            from gb10_fp8_mlp_probe import compare_one, check_compiled, bench
+            compare_one(128, 128, 256, folded=False)
+            compare_one(128, 128, 256, folded=True)
+            compare_one(256, 768, 2816, folded=True)
+            check_compiled()
+            if args.benchmark_sm121_fp8_mlp:
+                bench(8192, 8)
+        elif args.check_fp8_mlp:
+            from track_1_short.perf.kernels.mlp import prime_stage_cache
+            prime_stage_cache()
+            print("[ok] legacy FP8 TMA MLP stage kernel launches")
+        else:
+            raise ValueError("--benchmark-sm121-fp8-mlp requires GB10_MLP_BACKEND=fp8_sm121")
     if args.benchmark_refresh:
         from gb10_training_probe import benchmark_refresh
         benchmark_refresh()
