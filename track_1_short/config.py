@@ -12,12 +12,17 @@ import os
 import uuid
 from dataclasses import dataclass
 
+from track_1_short.perf.gb10_config import gb10_microbatch_divisor
+
 # Preserve the original per-GPU microbatch shapes. With one rank, use eight times
 # as many optimizer steps to approximate record #92's training-token budget.
 # This is NOT exact 8-way gradient accumulation; convergence must be re-measured.
 TRAIN_WORLD_SIZE = int(os.environ.get("WORLD_SIZE", "1"))
 assert TRAIN_WORLD_SIZE in (1, 8), "Record #92 supports one or eight H100 GPUs"
-SINGLE_GPU_STEP_SCALE = 8 if TRAIN_WORLD_SIZE == 1 else 1
+# GB10 trades smaller per-step batches for more optimizer updates; this is
+# token-budget scaling, NOT exact gradient accumulation.
+GB10_MICROBATCH_DIVISOR = gb10_microbatch_divisor() if TRAIN_WORLD_SIZE == 1 else 1
+SINGLE_GPU_STEP_SCALE = (8 * GB10_MICROBATCH_DIVISOR) if TRAIN_WORLD_SIZE == 1 else 1
 
 @dataclass(slots=True)
 class Hyperparameters:
@@ -27,7 +32,7 @@ class Hyperparameters:
     val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
     val_tokens: int = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
     # batch sizes
-    val_batch_size: int = int(os.environ.get("VAL_BATCH_SIZE", 4 * 64 * 1024 * TRAIN_WORLD_SIZE))
+    val_batch_size: int = int(os.environ.get("VAL_BATCH_SIZE", (4 * 64 * 1024 * TRAIN_WORLD_SIZE) // GB10_MICROBATCH_DIVISOR))
     # schedule: the base step count of the main stages (SCHEDULE_GROWTH_STEPS are added on top), then
     # the extension stage. The override is for step-count sweeps (record #360's KX_STEPS).
     num_scheduled_iterations: int = int(os.environ.get("NUM_SCHEDULED_ITERATIONS", 1122 * SINGLE_GPU_STEP_SCALE))
@@ -80,18 +85,18 @@ WS_POST_YARN_EXT = 20
 
 # window_sizes are in units of BLOCK_SIZE tokens.
 TRAINING_STAGES = [
-    TrainingStage(duration=STAGE_DURATIONS[0], train_max_seq_len=896, batch_size=8 * 2048 * TRAIN_WORLD_SIZE, window_sizes=(1, 3), lr_mul=1.0,
+    TrainingStage(duration=STAGE_DURATIONS[0], train_max_seq_len=896, batch_size=8 * 2048 * TRAIN_WORLD_SIZE // GB10_MICROBATCH_DIVISOR, window_sizes=(1, 3), lr_mul=1.0,
                   mtp_weights_start=[1.0, 0.5, 0.25], mtp_weights_end=[1.0, 0.5, 0.0], prefix_weights=(0.25,)),
-    TrainingStage(duration=STAGE_DURATIONS[1], train_max_seq_len=2048, batch_size=16 * 2048 * TRAIN_WORLD_SIZE, window_sizes=(3, 7), lr_mul=1.52,  # (16/8)**0.6
+    TrainingStage(duration=STAGE_DURATIONS[1], train_max_seq_len=2048, batch_size=16 * 2048 * TRAIN_WORLD_SIZE // GB10_MICROBATCH_DIVISOR, window_sizes=(3, 7), lr_mul=1.52,  # (16/8)**0.6
                   mtp_weights_start=[1.0, 0.5], mtp_weights_end=[1.0, 0.0], prefix_weights=(0.20, 0.15, 0.10, 0.05)),
-    TrainingStage(duration=STAGE_DURATIONS[2] - TAPER_DURATION, train_max_seq_len=3072, batch_size=24 * 2048 * TRAIN_WORLD_SIZE, window_sizes=(5, 11), lr_mul=1.73,  # (24/8)**0.5
+    TrainingStage(duration=STAGE_DURATIONS[2] - TAPER_DURATION, train_max_seq_len=3072, batch_size=24 * 2048 * TRAIN_WORLD_SIZE // GB10_MICROBATCH_DIVISOR, window_sizes=(5, 11), lr_mul=1.73,  # (24/8)**0.5
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0], prefix_weights=(0.0,)),
     # terminal batch taper: 24 -> 20, lr_mul scaled by sqrt(20/24)
-    TrainingStage(duration=TAPER_DURATION, train_max_seq_len=3072, batch_size=TAPER_BATCH_UNITS * 2048 * TRAIN_WORLD_SIZE, window_sizes=(5, 11),
+    TrainingStage(duration=TAPER_DURATION, train_max_seq_len=3072, batch_size=TAPER_BATCH_UNITS * 2048 * TRAIN_WORLD_SIZE // GB10_MICROBATCH_DIVISOR, window_sizes=(5, 11),
                   lr_mul=1.73 * (TAPER_BATCH_UNITS / 24) ** 0.5,
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0], prefix_weights=(0.0,)),
     # extension stage at batch 8: wall-matched, ~18 steps at batch 8 cost what 7 do at batch 24
-    TrainingStage(train_max_seq_len=3072, batch_size=8 * 2048 * TRAIN_WORLD_SIZE, window_sizes=(6, 13), lr_mul=1.0,  # lr_mul is not used (lr sits at the floor)
+    TrainingStage(train_max_seq_len=3072, batch_size=8 * 2048 * TRAIN_WORLD_SIZE // GB10_MICROBATCH_DIVISOR, window_sizes=(6, 13), lr_mul=1.0,  # lr_mul is not used (lr sits at the floor)
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0], prefix_weights=(0.0,)),
 ]
 assert VIRTUAL_SEQ_CAP % BLOCK_SIZE == 0
