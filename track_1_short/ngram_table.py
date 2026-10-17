@@ -44,13 +44,14 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
+from track_1_short.config import SINGLE_GPU_STEP_SCALE
 from track_1_short.perf.kernels.ngram_adam import adam_rows_, bring_rows_current, claim_rows
 from track_1_short.perf.kernels.row_scatter import scatter_add_rows
 from track_1_short.sharded_rows import RowOwners, RowPull, all_to_all_rows
 
 # 224x the 377,280-row bigram table of earlier records. Rows [0, V/2) are the bigram channel,
 # [V/2, V) the trigram channel. Divisible by 8 (the shard) and < 2**31 (row ids are int32).
-NGRAM_VOCAB_SIZE = 84_602_880
+NGRAM_VOCAB_SIZE = int(__import__("os").environ.get("NGRAM_VOCAB_SIZE", 84_602_880 // SINGLE_GPU_STEP_SCALE))
 NGRAM_DIM = 768
 # The shared +-1 sign pool. A power of two, so `& (rows - 1)` is the non-negative remainder of the
 # wrapped int32 hash (values ~500-15000 gave similar results in the bigram record).
@@ -75,7 +76,7 @@ NGRAM_ADAM_BETA2 = 0.95
 # From this step the table updates every 4th step instead of every 2nd (record #360). One event then
 # stands for two: beta2 is squared, so the second moment decays at the same rate per step, and the
 # weight-decay multiplier doubles.
-NGRAM_ADAM_PERIOD4_START = 336
+NGRAM_ADAM_PERIOD4_START = 336 * SINGLE_GPU_STEP_SCALE
 NGRAM_WD_MUL_PERIOD4 = 10.0
 # The longest cycle, in steps: the cache holds one cycle's rows (two per token per step).
 MAX_CYCLE_STEPS = 4
@@ -170,7 +171,8 @@ class NgramTable:
         self.owners = RowOwners(NGRAM_VOCAB_SIZE, rank, world_size)
         self.first_row = self.owners.first_row
         rows = self.owners.rows_per_rank
-        # 10.6M x 768 bf16 = 16.2 GB. Zero init, as record #360.
+        # Default single-GPU size: 10.575M x 768 bf16 = 16.2 GB. The original
+        # 84.6M-row table needs ~130 GB and cannot fit in one 80 GB H100.
         self.shard = torch.zeros(rows, NGRAM_DIM, dtype=torch.bfloat16, device=device)
         # Adam's second moment, one fp32 scalar per row (beta1 = 0: no first moment), current as of the
         # row's last_event; beta2_history[e] is event e's beta2, for replaying the events a row missed.
