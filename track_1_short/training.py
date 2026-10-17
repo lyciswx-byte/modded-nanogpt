@@ -7,6 +7,11 @@ import torch
 from track_1_short.config import BLOCK_SIZE, VIRTUAL_SEQ_CAP
 from track_1_short.model.gpt import ForwardScheduleConfig
 from track_1_short.ngram_table import NGRAM_ADAM_PERIOD4_START
+import os
+
+# Optional tuning for the smaller effective batch on one GPU; defaults to #92's LR.
+LR_SCALE = float(os.environ.get("LR_SCALE", "1.0"))
+assert LR_SCALE > 0
 from track_1_short.optim.anvil import RAIL_ENGAGE_STEP, RAIL_FAST_BETA, RAIL_FAST_WEIGHT, AnvilAndAdam, AnvilBank
 from track_1_short.perf.row_prefetch import RowPrefetch
 from track_1_short.sampled_softmax import SampledLoss
@@ -107,13 +112,13 @@ class TrainingManager():
         ]
 
         self.adam_defaults = adam_defaults = dict(
-            lr=0.008,
+            lr=0.008 * LR_SCALE,
             eps=1e-10,
             weight_decay=0.005,
         )
 
         anvil_defaults = dict(
-            lr=0.023,
+            lr=0.023 * LR_SCALE,
             momentum=0.95,      # Nesterov lookahead; get_rail_beta rewrites it every step
             beta2=0.9,          # lane-energy EMA decay for the equalizer
             weight_decay=2.25,
