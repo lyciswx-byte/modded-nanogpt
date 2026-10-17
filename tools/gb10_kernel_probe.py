@@ -105,6 +105,32 @@ def check_attention():
         print(f"[ok] varlen causal window attention QK={qk_dim} V={v_dim} forward/backward")
 
 
+def check_compiled_attention(capture=False):
+    """Test the same fullgraph compilation path used by the trainer."""
+    cu = torch.tensor([0, 5, 12], device="cuda", dtype=torch.int32)
+    q = torch.randn((12, 2, 64), device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    k = torch.randn((12, 2, 64), device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    v = torch.randn((12, 2, 128), device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    compiled = torch.compile(varlen_attention, dynamic=False, fullgraph=True)
+    for _ in range(2):
+        y = compiled(q, k, v, cu, max_len=7, scale=0.125, left_window=3)
+        gradients = torch.autograd.grad(y.float().square().mean(), (q, k, v))
+        assert all(g.isfinite().all().item() for g in gradients)
+    torch.cuda.synchronize()
+    print("[ok] torch.compile fullgraph attention forward/backward")
+    if capture:
+        graph = torch.cuda.CUDAGraph()
+        # Real CUDA-graph capture: tests allocation/launch restrictions separately
+        # from compile. All inputs are static and remain alive across replay.
+        with torch.cuda.graph(graph):
+            output = compiled(q, k, v, cu, max_len=7, scale=0.125, left_window=3)
+            grads = torch.autograd.grad(output.float().square().mean(), (q, k, v))
+        graph.replay()
+        torch.cuda.synchronize()
+        assert all(t.isfinite().all().item() for t in grads)
+        print("[ok] attention forward/backward CUDA graph replay")
+
+
 def check_bf16_mlp():
     x = torch.randn((128, 768), device="cuda", dtype=torch.bfloat16, requires_grad=True)
     w1 = torch.randn((2816, 768), device="cuda", dtype=torch.bfloat16, requires_grad=True) * 0.01
@@ -133,9 +159,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--attention-only", action="store_true")
     parser.add_argument("--check-fp8-mlp", action="store_true")
+    parser.add_argument("--skip-compiled-attention", action="store_true",
+                        help="debug eager operators only (not representative of trainer)")
+    parser.add_argument("--capture-attention", action="store_true",
+                        help="also capture/replay the compiled attention backward graph")
     args = parser.parse_args()
     require_gb10()
     check_attention()
+    if not args.skip_compiled_attention:
+        check_compiled_attention(capture=args.capture_attention)
     if not args.attention_only:
         check_triton()
         check_fp8_matmul()
