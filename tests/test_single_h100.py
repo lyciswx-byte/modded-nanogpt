@@ -23,6 +23,10 @@ print(json.dumps(dict(world=TRAIN_WORLD_SIZE, scale=SINGLE_GPU_STEP_SCALE,
 
 def get_config(world_size: int):
     env = os.environ.copy()
+    # These tests exercise the H100-port defaults even inside a GB10 Docker
+    # container where NANOGPT_TARGET=gb10 is part of the image environment.
+    env.pop("NANOGPT_TARGET", None)
+    env.pop("GB10_MICROBATCH_DIVISOR", None)
     for name in ("NUM_SCHEDULED_ITERATIONS", "NUM_EXTENSION_ITERATIONS", "VAL_BATCH_SIZE"):
         env.pop(name, None)
     env["WORLD_SIZE"] = str(world_size)
