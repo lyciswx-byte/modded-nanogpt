@@ -151,17 +151,17 @@ def sweep(tokens: int, iters: int):
         command = [sys.executable, str(Path(__file__).resolve()), "--bench",
                    "--tokens", str(tokens), "--iters", str(iters)]
         p = subprocess.run(command, env=env, text=True, capture_output=True)
-        print(f"\\n--- tile M={m} N={n} exit={p.returncode} ---")
+        print(f"\n--- tile M={m} N={n} exit={p.returncode} ---")
         print(p.stdout[-2000:])
         if p.returncode != 0:
             print(p.stderr[-3000:])
             results.append((float("inf"), m, n))
             continue
-        match = re.search(r"fp8_sm121: median=([\\d.]+) ms", p.stdout)
+        match = re.search(r"fp8_sm121: median=([\d.]+) ms", p.stdout)
         if not match:
             raise RuntimeError(f"Missing benchmark result for tile M={m} N={n}")
         results.append((float(match.group(1)), m, n))
-    print("\\nSM121 FP8 MLP benchmark ranking (median ms, smaller is better):")
+    print("\nSM121 FP8 MLP benchmark ranking (median ms, smaller is better):")
     for t, m, n in sorted(results):
         print(f"tile M={m:2} N={n:3}: {t:.3f} ms")
     finite = [r for r in results if r[0] != float("inf")]
