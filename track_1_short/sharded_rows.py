@@ -27,10 +27,20 @@ import torch.distributed as dist
 from torch import Tensor
 
 
+class _CompletedWork:
+    """Completed collective-compatible handle for world_size=1 (no NCCL zero-count send)."""
+
+    def wait(self):
+        return True
+
+
 def all_to_all_rows(send: Tensor, send_counts: list[int], recv_counts: list[int], async_op: bool = False):
     """Rows send[sum(send_counts[:r]) : sum(send_counts[:r+1])] go to rank r; the rows received come
     back concatenated in rank order. Returns (received, work) with async_op, else received."""
     out = send.new_empty((sum(recv_counts), *send.shape[1:]))
+    if len(send_counts) == len(recv_counts) == 1:
+        assert send_counts == recv_counts == [0] and send.shape[0] == 0
+        return (out, _CompletedWork()) if async_op else out
     work = dist.all_to_all_single(out, send, output_split_sizes=recv_counts, input_split_sizes=send_counts,
                                   async_op=async_op)
     return (out, work) if async_op else out
@@ -77,7 +87,13 @@ class RowOwners:
         send_counts[self.rank] = 0
         send = torch.from_numpy(send_counts.astype(np.int64))
         recv = torch.empty_like(send)
-        work = dist.all_to_all_single(recv, send, async_op=True)
+        if len(self.bounds) == 2:
+            # Every row is local. In particular no zero-sized NCCL/Gloo exchanges.
+            assert lo == 0 and hi == want.shape[0]
+            recv.zero_()
+            work = _CompletedWork()
+        else:
+            work = dist.all_to_all_single(recv, send, async_op=True)
         return RowPull(want=want, lo=lo, hi=hi, send_counts=send_counts.tolist(), counts_exchange=(work, recv, send))
 
     def exchange_ids(self, pull: RowPull):
