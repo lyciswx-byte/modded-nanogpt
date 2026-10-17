@@ -243,12 +243,20 @@ def main():
             check_compiled()
             if args.benchmark_sm121_fp8_mlp:
                 bench(8192, 8)
-        elif args.check_fp8_mlp:
-            from track_1_short.perf.kernels.mlp import prime_stage_cache
-            prime_stage_cache()
-            print("[ok] selected FP8 fused MLP kernel priming (SM121 or explicit Hopper override)")
+        elif gb10_mlp_backend() == "fp8":
+            from track_1_short.perf.kernels.mlp import ACTIVE_FP8_MLP_IMPL, prime_stage_cache
+            if ACTIVE_FP8_MLP_IMPL == "sm121":
+                from gb10_fp8_mlp_bench import correctness, benchmark
+                correctness()  # checks actual fused forward/backward, not just priming
+                if args.benchmark_sm121_fp8_mlp:
+                    benchmark(8192)
+            elif args.check_fp8_mlp:
+                prime_stage_cache()
+                print("[ok] explicit original Hopper FP8 TMA kernel priming")
+            else:
+                raise ValueError("SM121 MLP benchmark does not support the Hopper implementation")
         else:
-            raise ValueError("--benchmark-sm121-fp8-mlp requires GB10_MLP_BACKEND=fp8_sm121")
+            raise ValueError("Select GB10_MLP_BACKEND=fp8 or fp8_sm121 for FP8 MLP checks")
     if args.benchmark_refresh:
         from gb10_training_probe import benchmark_refresh
         benchmark_refresh()
