@@ -1,0 +1,10 @@
+# NGC 26.09 already includes GPU-ready PyTorch, CUDA and Triton.
+# Do NOT install requirements.txt (pins the H100 torch 2.10/cu128 build).
+numpy
+tqdm
+huggingface-hub==1.29.0
+kernels==0.16.1
+setuptools
+typing-extensions
+datasets
+tiktoken
