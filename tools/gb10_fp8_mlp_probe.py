@@ -11,6 +11,8 @@ data loading and CE. They are NOT whole-training speedup predictions.
 import argparse
 import os
 import platform
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -138,14 +140,51 @@ def bench(tokens, iters):
               f"(M={tokens},D=768,H=2816; no optimizer/refresh)")
 
 
+def sweep(tokens: int, iters: int):
+    """Run 6 candidate tiled kernels in isolated interpreters (process-static configs)."""
+    variants = [(m, n) for m in (16, 32, 64) for n in (64, 128)]
+    results = []
+    for m, n in variants:
+        env = os.environ.copy()
+        env["GB10_FP8_MLP_TILE_M"] = str(m)
+        env["GB10_FP8_MLP_TILE_N"] = str(n)
+        command = [sys.executable, str(Path(__file__).resolve()), "--bench",
+                   "--tokens", str(tokens), "--iters", str(iters)]
+        p = subprocess.run(command, env=env, text=True, capture_output=True)
+        print(f"\\n--- tile M={m} N={n} exit={p.returncode} ---")
+        print(p.stdout[-2000:])
+        if p.returncode != 0:
+            print(p.stderr[-3000:])
+            results.append((float("inf"), m, n))
+            continue
+        match = re.search(r"fp8_sm121: median=([\\d.]+) ms", p.stdout)
+        if not match:
+            raise RuntimeError(f"Missing benchmark result for tile M={m} N={n}")
+        results.append((float(match.group(1)), m, n))
+    print("\\nSM121 FP8 MLP benchmark ranking (median ms, smaller is better):")
+    for t, m, n in sorted(results):
+        print(f"tile M={m:2} N={n:3}: {t:.3f} ms")
+    finite = [r for r in results if r[0] != float("inf")]
+    if not finite:
+        raise RuntimeError("All candidate tiles failed; do not enable fp8_sm121 training")
+    best = min(finite)
+    print(f"Best tested tile: GB10_FP8_MLP_TILE_M={best[1]} "
+          f"GB10_FP8_MLP_TILE_N={best[2]}; repeat for all training-stage sizes.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-compile", action="store_true")
     parser.add_argument("--bench", action="store_true")
+    parser.add_argument("--sweep", action="store_true",
+                        help="six tile candidates in isolated processes; validates each before timing")
     parser.add_argument("--tokens", type=int, default=8192)
     parser.add_argument("--iters", type=int, default=8)
     args = parser.parse_args()
     require_sm121()
+    if args.sweep:
+        sweep(args.tokens, args.iters)
+        return
     print(f"SM121 tiles M={TILE_M} N={TILE_N}; torch={torch.__version__}")
     compare_one(128, 128, 256, folded=False)
     compare_one(128, 128, 256, folded=True)
