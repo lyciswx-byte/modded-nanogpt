@@ -501,10 +501,12 @@ class GPT(nn.Module):
 
     def _mlp(self, x_normed, c_fc, c_proj, fp8_args):
         """Switchable BF16 ATen MLP or original Triton TMA FP8 MLP."""
-        if ACTIVE_MLP_BACKEND == "bf16":
-            # No TMA descriptors or custom FP8 GEMM. Standard autograd supports
-            # this branch through torch.compile and CUDA-graph capture.
+        if ACTIVE_MLP_BACKEND == "bf16" or (ACTIVE_MLP_BACKEND == "fp8_sm121" and fp8_args is None):
+            # The SM121 eval path deliberately avoids Hopper TensorDescriptor/TMA.
             return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
+        if ACTIVE_MLP_BACKEND == "fp8_sm121":
+            from track_1_short.perf.kernels.mlp_sm121 import SM121FP8MLPFunction
+            return SM121FP8MLPFunction.apply(x_normed, c_fc, c_proj, *fp8_args)
         if fp8_args is None:
             return ReLUSqrdMLP(x_normed, c_fc, c_proj)
         return ReLUSqrdMLP(x_normed, c_fc, c_proj, *fp8_args)
@@ -572,7 +574,7 @@ class GPT(nn.Module):
         use_fp8 = self.training
         # Keep record #92's QKV and loss FP8 while offering a portable
         # BF16 MLP path for GB10's reduced per-block shared-memory capacity.
-        mlp_fp8 = use_fp8 and ACTIVE_MLP_BACKEND == "fp8"
+        mlp_fp8 = use_fp8 and ACTIVE_MLP_BACKEND in ("fp8", "fp8_sm121")
         attn_f8_weights = self._attn_fp8_weights() if use_fp8 else None
         mlp_up_f8 = self._mlp_up_f8.unbind(0) if mlp_fp8 else None
 
@@ -904,7 +906,7 @@ class GPT(nn.Module):
         lm_head only changes on Adam steps, so the caller passes refresh_lm=False after the others.
         """
         with torch.no_grad():
-            if ACTIVE_MLP_BACKEND == "fp8":
+            if ACTIVE_MLP_BACKEND in ("fp8", "fp8_sm121"):
                 self._quantize_mlp_weights_and_scales()
             else:
                 # Keep the refresh/capture bootstrap clock in sync without launching
