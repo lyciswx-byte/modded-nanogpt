@@ -1,7 +1,7 @@
 """Architecture-selectable variable-length attention for record #92.
 
-FA3's prebuilt sm90a binary must never be loaded on GB10 (sm121). FA2 is the
-conservative GB10 default; FA4 is explicitly opt-in because the published
+FA3's prebuilt sm90a binary must never be loaded on GB10 (sm121). Native PyTorch
+FlexAttention is the GB10 default; FA2/FA4 are opt-in because the published
 Blackwell CuTeDSL support does not imply compatibility with every SM121 kernel.
 All backend imports are lazy, so CPU configuration tests need no GPU extension.
 
@@ -66,6 +66,9 @@ def load_attention_kernel(name: str | None = None):
 # Import only once, outside forward/torch.compile; importantly never import the FA3
 # H100-specific extension in GB10 mode.
 _VARLEN_KERNEL = None
+# Captured once per process (before torch.compile); no mutable environment
+# reads occur during CUDA-graph replay.
+ACTIVE_BACKEND = configured_backend()
 
 
 def prime_attention_backend():
@@ -73,7 +76,7 @@ def prime_attention_backend():
     global _VARLEN_KERNEL
     if _VARLEN_KERNEL is None:
         _VARLEN_KERNEL = load_attention_kernel()
-    return configured_backend()
+    return ACTIVE_BACKEND
 
 
 def _flex_varlen_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -117,7 +120,7 @@ def varlen_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                      left_window: int) -> torch.Tensor:
     """[T,H,Dqk] x 2 and [T,H,Dv] -> [T,H,Dv], packed causal local attention."""
     global _VARLEN_KERNEL
-    backend = configured_backend()
+    backend = ACTIVE_BACKEND
     if backend != "flex" and _VARLEN_KERNEL is None:
         _VARLEN_KERNEL = load_attention_kernel()
 
