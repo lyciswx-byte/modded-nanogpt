@@ -27,6 +27,7 @@ from triton.tools.tensor_descriptor import TensorDescriptor
 
 from track_1_short.perf.kernels.transpose import transpose_copy
 from track_1_short.perf.gb10_config import gb10_target
+from track_1_short.perf.kernels.sm121_fp8_mlp import fused_activation
 
 # The original Hopper TMA path remains intact for H100. GB10 FP8 MLP is
 # opt-in (GB10_MLP_BACKEND=fp8), and uses pointer-based SM121 kernels by default.
@@ -255,7 +256,6 @@ def linear_relu_square(a, b, aux=None, a_f8=None, b_f8=None, dequant_scale_ptr=N
         # Trace-safe, descriptor-free FP8 path: preserves the existing fused
         # autograd arguments, including delayed post and dpre scales and
         # row-major/transposed FP8 outputs for subsequent GEMMs.
-        from track_1_short.perf.kernels.sm121_fp8_mlp import fused_activation
         return fused_activation(
             a_f8, b_f8, dequant_scale_ptr, post_scale, post_amax,
             aux=aux, dpre_scale=dpre_scale, dpre_amax=dpre_amax,
