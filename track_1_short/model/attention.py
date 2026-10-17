@@ -1,43 +1,18 @@
-"""Causal self-attention: YaRN RoPE, varlen FlashAttention-3, and the per-layer extras (XSA, gates).
+"""Causal self-attention: YaRN RoPE, variable-length architecture-selected attention, and the per-layer extras (XSA, gates).
 
 Heads have mixed widths (record #360): each layer's module is built with its own query/key width
 (qk_dim, 64 or 128) and value/output width (v_dim, 64 or 128). The layer-to-width map lives in
-model/gpt.py. FA3 reads the widths unpadded, which needs record #360's patched FA3 build (below).
+model/gpt.py. The backend adapter pads unequal head dimensions on GB10 before dispatch.
 """
-import hashlib
 import math
-import pathlib
 from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-from kernels import get_kernel
 from torch import Tensor, nn
 
+from track_1_short.perf.attention_backend import varlen_attention
 from track_1_short.perf.kernels.qkv_rope import PackedFP8QKV, qk_norm_rope_forward
-
-# Record #360's FA3 build, patched to take unequal query/key and value head widths ((64, 128) and
-# (128, 64)). Pinned to the immutable commit of its v1 tag, and the loaded binary is checked against
-# the sha256 published in that repo's src_patches/, so a swapped artifact fails here instead of
-# silently changing behaviour. It links libcudart.so.13, which the Dockerfile's CUDA 13 base provides.
-FA3_REPO = "devenpzak/flash-attn3-12864"
-FA3_REVISION = "64c1e6d1f2780e7931839f41426ddcdb564a7cb9"
-FA3_BINARY_SHA256 = "9beee90dbef9c9c221e677dad9f932108b70c46aa35841fc0862281d5b84c09b"
-
-
-def load_flash_attn3():
-    """The pinned, checksum-verified patched FA3 kernel's flash_attn_interface."""
-    # The publisher is a personal Hub account, which kernels>=0.16 does not trust by default. Trust
-    # comes instead from the pinned commit and the binary checksum below.
-    fa3 = get_kernel(FA3_REPO, revision=FA3_REVISION, trust_remote_code=True)
-    binary = next(pathlib.Path(fa3.__file__).parent.glob("_flash_attn3_cuda_*.so"))
-    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-    assert digest == FA3_BINARY_SHA256, f"unexpected FA3 binary {binary}"
-    return fa3.flash_attn_interface
-
-
-flash_attn_interface = load_flash_attn3()
-
 
 class Yarn(nn.Module):
     """RoPE cos/sin tables for one head width, rescaled (YaRN) whenever its layers' window grows.
@@ -215,9 +190,8 @@ class CausalSelfAttention(nn.Module):
             max_len = 2 * max_len
 
         # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
-        y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
-                                                        max_seqlen_q=max_len, max_seqlen_k=max_len,
-                                                        causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
+        y = varlen_attention(q[0], k[0], v[0], seqlens=seqlens,
+                             max_len=max_len, scale=yarn.attn_scale, left_window=bm_size)
         y = y.view(B, T, H, self.v_dim)
         # Gated XSA (arXiv:2603.09078) with learnable strength: subtract per-head fraction tanh(α)
         # of y aligned with v̂. Non-paired only (v shape doesn't line up for paired layers).
