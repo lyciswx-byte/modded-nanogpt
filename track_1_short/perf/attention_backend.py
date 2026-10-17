@@ -64,6 +64,14 @@ def load_attention_kernel(name: str | None = None):
 _VARLEN_KERNEL = None
 
 
+def prime_attention_backend():
+    """Resolve backend before torch.compile or CUDA-graph capture."""
+    global _VARLEN_KERNEL
+    if _VARLEN_KERNEL is None:
+        _VARLEN_KERNEL = load_attention_kernel()
+    return configured_backend()
+
+
 def varlen_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                      seqlens: torch.Tensor, max_len: int, scale: float,
                      left_window: int) -> torch.Tensor:
