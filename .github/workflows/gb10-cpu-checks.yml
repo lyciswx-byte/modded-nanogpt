@@ -1,0 +1,23 @@
+name: GB10 port CPU checks
+on:
+  push:
+    branches: [92-1xGB10]
+  pull_request:
+    branches: [master]
+jobs:
+  syntax-and-reference:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Python syntax
+        run: python -m compileall -q train_gpt.py track_1_short tools tests
+      - name: Install only CPU test dependencies (no NVIDIA/GPU is available)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy
+          python -m pip install torch==2.10 --index-url https://download.pytorch.org/whl/cpu
+      - name: Run single-GPU profile and mathematical reference tests
+        run: python -m unittest discover -s tests -p 'test*.py' -v
