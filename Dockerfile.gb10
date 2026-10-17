@@ -1,0 +1,28 @@
+# Native arm64 NVIDIA Grace Blackwell / GB10 image. Release 26.09 was the
+# latest published NGC PyTorch release checked on 2026-10-16, NOT a floating
+# "latest" image. NGC provides CUDA 13.4.1, PyTorch and Triton together.
+ARG NGC_PYTORCH_IMAGE=nvcr.io/nvidia/pytorch:26.09-py3
+FROM ${NGC_PYTORCH_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    NANOGPT_TARGET=gb10 \
+    NANOGPT_ATTENTION_BACKEND=fa2 \
+    GB10_MLP_BACKEND=bf16 \
+    GB10_MICROBATCH_DIVISOR=2 \
+    TORCH_CUDA_ARCH_LIST="12.0+PTX" \
+    TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas \
+    PYTORCH_ALLOC_CONF=expandable_segments:True
+
+WORKDIR /workspace/modded-nanogpt
+COPY requirements.gb10.txt /tmp/requirements.gb10.txt
+# IMPORTANT: Never pip install torch==2.10/cu128 here: it would replace the
+# compatible CUDA-13 arm64 torch that is already in the NGC base image.
+RUN python -m pip install --no-cache-dir -r /tmp/requirements.gb10.txt \
+    && python -c "import torch; print('NGC torch', torch.__version__, 'CUDA', torch.version.cuda); assert torch.version.cuda.startswith('13.')"
+
+COPY . /workspace/modded-nanogpt
+RUN chmod +x run.sh run_gb10.sh \
+    && python -m compileall -q train_gpt.py track_1_short tools tests
+
+CMD ["bash"]
