@@ -47,7 +47,13 @@ def _bundle(m: int, n: int, k: int, seed: int):
     w1col = w1q.T.contiguous().T
     w2col = w2q.T.contiguous().T
     xq, xt = quantize_dual_layout_fused(x.detach(), xs, e4)
-    ps, ds = one(0.01), one(0.01)
+    # Use a real exact bootstrap scale for this reference, rather than an
+    # arbitrary 0.01 that would saturate legitimate post-ReLU-square tails.
+    pre_ref = F.linear(x.detach(), w1.detach())
+    post_ref = F.relu(pre_ref).square()
+    ps = (post_ref.float().amax() * (1.03 / 448.0)).clamp_min(1e-6).reshape(1)
+    dpre_ref = (F.linear(dy.detach(), w2.detach()) * 2 * F.relu(pre_ref)).float()
+    ds = (dpre_ref.abs().amax() * (1.25 / 57344.0)).clamp_min(1e-7).reshape(1)
     pa, da = torch.zeros(1, device=device), torch.zeros(1, device=device)
     args = (w1q, xs * w1s, xq, w2col, w2s, ps, pa, w2q,
             gs * w2s, xt, xs, w1col, w1s, gs, ds, da)
