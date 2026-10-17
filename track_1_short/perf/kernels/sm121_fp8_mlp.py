@@ -61,7 +61,7 @@ def autotune_enabled() -> bool:
 @triton.jit
 def _fp8_relu_square_sm121(
     a_ptr, b_ptr, aux_ptr, out_ptr, out_t_ptr,
-    dequant_ptr, activation_scale_ptr, amax_ptr,
+    dequant_ptr, post_scale_ptr, dpre_scale_ptr, amax_ptr,
     M: tl.constexpr, N: tl.constexpr, K: tl.constexpr,
     BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
     FORWARD: tl.constexpr,
@@ -90,7 +90,7 @@ def _fp8_relu_square_sm121(
         relu = tl.maximum(pre, 0).to(tl.bfloat16)
         post = (relu * relu).to(tl.bfloat16)
         post_fp32 = post.to(tl.float32)
-        s = tl.load(activation_scale_ptr)
+        s = tl.load(post_scale_ptr)
         quant = tl.minimum(post_fp32 / s, 448.0).to(tl.float8e4nv)
         mag = tl.max(tl.max(tl.where(mask, post_fp32, 0.0), axis=1), axis=0)
     else:
@@ -99,10 +99,10 @@ def _fp8_relu_square_sm121(
         # kernel: dpre = 2 * (dout @ W2) * sqrt(post).
         post_fp8 = tl.load(aux_ptr + rm[:, None] * N + rn[None, :],
                            mask, other=0).to(tl.float32)
-        post_scale = tl.load(activation_scale_ptr)
+        post_scale = tl.load(post_scale_ptr)
         dpre = (2.0 * acc * tl.sqrt(post_fp8 * post_scale)).to(tl.bfloat16)
         dpre_float = dpre.to(tl.float32)
-        s = tl.load(activation_scale_ptr + 1)
+        s = tl.load(dpre_scale_ptr)
         quant = tl.maximum(tl.minimum(dpre_float / s, 57344.0), -57344.0).to(tl.float8e5)
         mag = tl.max(tl.max(tl.where(mask, tl.abs(dpre_float), 0.0), axis=1), axis=0)
     tl.store(out_ptr + rm[:, None] * N + rn[None, :], quant, mask)
@@ -115,11 +115,12 @@ def _grid(m: int, n: int, tile: MlpTile):
     return (triton.cdiv(m, tile.m), triton.cdiv(n, tile.n))
 
 
-def _launch(a, b, aux, out, out_t, scales, amax, forward: bool, tile: MlpTile):
+def _launch(a, b, aux, out, out_t, dequant, post_scale, dpre_scale, amax,
+            forward: bool, tile: MlpTile):
     m, k = a.shape
     n = b.shape[0]
     _fp8_relu_square_sm121[_grid(m, n, tile)](
-        a, b, aux, out, out_t, scales[0], scales[1], amax,
+        a, b, aux, out, out_t, dequant, post_scale, dpre_scale, amax,
         M=m, N=n, K=k, BM=tile.m, BN=tile.n, BK=tile.k,
         FORWARD=forward, num_warps=tile.warps, num_stages=tile.stages,
     )
@@ -145,22 +146,20 @@ def fused_activation(a_f8: torch.Tensor, b_f8: torch.Tensor,
         assert a_f8.dtype == b_f8.dtype == torch.float8_e4m3fn
         assert post_amax is not None
         out_dtype = torch.float8_e4m3fn
-        scale_pair = torch.stack((post_scale.reshape(()), post_scale.reshape(())))
         amax = post_amax
     else:
         assert a_f8.dtype == torch.float8_e5m2 and b_f8.dtype == torch.float8_e4m3fn
         assert aux.dtype == torch.float8_e4m3fn and aux.shape == (m, n)
         assert dpre_scale is not None and dpre_amax is not None
         out_dtype = torch.float8_e5m2
-        scale_pair = torch.stack((post_scale.reshape(()), dpre_scale.reshape(())))
         amax = dpre_amax
     out = torch.empty((m, n), dtype=out_dtype, device=a_f8.device)
     out_t = torch.empty((n, m), dtype=out_dtype, device=a_f8.device)
-    # One 2-element scale tensor keeps the FP8 forward/backward signature stable.
-    # Only GPU Tensor scalar contents are read inside CUDA-graph replay.
+    # All scale tensors are read live inside CUDA-graph replay (no host scalar capture).
     tile = selected_tile(forward, m, n, k)
     _launch(a_f8, b_f8, aux if aux is not None else out,
-            out, out_t, (dequant_scale, scale_pair), amax, forward, tile)
+            out, out_t, dequant_scale, post_scale,
+            dpre_scale if dpre_scale is not None else post_scale, amax, forward, tile)
     return (None, None, out, out_t) if forward else (out, out_t)
 
 
@@ -186,11 +185,10 @@ def prime_sm121_fp8_mlp(shapes: list[tuple[int, int, int]]):
             out = torch.empty((m, n), device="cuda", dtype=out_dtype)
             out_t = torch.empty((n, m), device="cuda", dtype=out_dtype)
             one = torch.ones(1, device="cuda", dtype=torch.float32)
-            scale_pair = torch.ones(2, device="cuda", dtype=torch.float32)
             amax = torch.zeros(1, device="cuda", dtype=torch.float32)
 
             def run(tile):
-                _launch(aa, bb, aux, out, out_t, (one, scale_pair),
+                _launch(aa, bb, aux, out, out_t, one, one, one,
                         amax, forward, tile)
 
             chosen, best_ms = None, float("inf")
