@@ -195,11 +195,11 @@ def main():
                                        max_value_embed_rows=model.value_embeds.shape[0], device=env.device)
     model.quantize_attn_fp8()
     model.quantize_mlp_fp8(refresh_lm=True)
-    # The fused MLP kernel picks its pipeline depth by trial launch, which cannot run under compile.
+    # FP8 MLP needs its kernel configuration selected outside torch.compile.
+    # On GB10 this primes and tunes the opt-in fused SM121 Triton kernels;
+    # on H100 it resolves the legacy TensorDescriptor/TMA pipeline depth.
+    # The distinct fp8_sm121 cuBLASLt+epilogue backend uses static tile settings.
     if gb10_mlp_backend() == "fp8":
-        # Only the Hopper FP8 MLP needs TensorDescriptor pipeline stage priming.
-        # The GB10 fp8_sm121 backend uses cuBLASLt and tiled pointer-based
-        # Triton epilogues, avoiding the Hopper TMA kernel entirely.
         prime_stage_cache()
 
     # Early steps train on a sampled softmax (see track_1_short/sampled_softmax.py).
