@@ -246,7 +246,7 @@ def main():
         elif args.check_fp8_mlp:
             from track_1_short.perf.kernels.mlp import prime_stage_cache
             prime_stage_cache()
-            print("[ok] legacy FP8 TMA MLP stage kernel launches")
+            print("[ok] selected FP8 fused MLP kernel priming (SM121 or explicit Hopper override)")
         else:
             raise ValueError("--benchmark-sm121-fp8-mlp requires GB10_MLP_BACKEND=fp8_sm121")
     if args.benchmark_refresh:
