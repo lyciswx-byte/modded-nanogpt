@@ -24,12 +24,23 @@ def native_training_loss(x, targets, mtp_weights, prefix_targets, prefix_weight,
         weight = lm_head_weight.index_select(1, sampled_loss.candidate_ids)
         target_positions = sampled_loss.target_pos[:T]
         prefix_positions = sampled_loss.prefix_pos[:T]
+    from gb10.fp8_linear import dispatch as gb10_linear
+    enable_fused = os.environ.get("GB10_FUSED_FP8_CE", "0") == "1"
+    if enable_fused:
+        from gb10.fused_fp8_ce import fused_loss
     slab = int(os.environ.get("GB10_CE_SLAB_ROWS", "128"))
     assert slab >= 1
     pieces = []
     for lo in range(0, T, slab):
         hi = min(T, lo + slab)
-        logits = x[lo:hi] @ weight
+        logits = gb10_linear(x[lo:hi], weight.T)
+        if enable_fused:
+            # The Triton CE reads FP8 E4M3 logits and fuses softcap,
+            # normalizer, MTP, prefix targets and BF16 logit gradients.
+            pieces.append(fused_loss(logits.contiguous(), target_positions,
+                                     prefix_positions, mtp_weights,
+                                     prefix_weight, lo, T))
+            continue
         logits = 23.0 * torch.sigmoid((logits + 5.0) / 7.5)
         logprob = F.log_softmax(logits.float(), dim=-1)
         length = hi - lo
