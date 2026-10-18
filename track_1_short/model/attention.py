@@ -6,6 +6,7 @@ model/gpt.py. FA3 reads the widths unpadded, which needs record #360's patched F
 """
 import hashlib
 import math
+import os
 import pathlib
 from dataclasses import dataclass
 
@@ -36,7 +37,9 @@ def load_flash_attn3():
     return fa3.flash_attn_interface
 
 
-flash_attn_interface = load_flash_attn3()
+GB10_NATIVE = os.environ.get("GB10_PROFILE") == "1"
+# The H100-patched FA3 shared object targets sm_90: do NOT load on GB10.
+flash_attn_interface = None if GB10_NATIVE else load_flash_attn3()
 
 
 class Yarn(nn.Module):
@@ -191,9 +194,15 @@ class CausalSelfAttention(nn.Module):
             qk, v = qkv.split((2 * H * self.qk_dim, H * self.v_dim), dim=-1)
             qk = qk.view(B, T, 2 * H, self.qk_dim)
             v = v.view(B, T, H, self.v_dim)
-            q, k = qk_norm_rope_forward(
-                qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
-            )
+            if GB10_NATIVE:
+                from gb10.attention import qk_norm_rope_reference
+                q, k = qk_norm_rope_reference(
+                    qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
+                )
+            else:
+                q, k = qk_norm_rope_forward(
+                    qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
+                )
             q, k = q[None], k[None]
         max_len = train_max_seq_len if self.training else self.val_max_seq_len
 
@@ -215,9 +224,13 @@ class CausalSelfAttention(nn.Module):
             max_len = 2 * max_len
 
         # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
-        y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
-                                                        max_seqlen_q=max_len, max_seqlen_k=max_len,
-                                                        causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
+        if GB10_NATIVE:
+            from gb10.attention import segmented_sdpa
+            y = segmented_sdpa(q[0], k[0], v[0], seqlens, bm_size, yarn.attn_scale)
+        else:
+            y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
+                                                            max_seqlen_q=max_len, max_seqlen_k=max_len,
+                                                            causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
         y = y.view(B, T, H, self.v_dim)
         # Gated XSA (arXiv:2603.09078) with learnable strength: subtract per-head fraction tanh(α)
         # of y aligned with v̂. Non-paired only (v shape doesn't line up for paired layers).
