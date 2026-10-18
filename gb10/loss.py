@@ -24,7 +24,11 @@ def native_training_loss(x, targets, mtp_weights, prefix_targets, prefix_weight,
         weight = lm_head_weight.index_select(1, sampled_loss.candidate_ids)
         target_positions = sampled_loss.target_pos[:T]
         prefix_positions = sampled_loss.prefix_pos[:T]
-    from gb10.fp8_linear import dispatch as gb10_linear
+    if os.environ.get("GB10_FP8_LINEAR", "0") == "1":
+        from gb10.fp8_linear import linear as gb10_linear
+    else:
+        # CPU/BF16 baseline should never import Triton/SM121 GPU kernels.
+        gb10_linear = F.linear
     enable_fused = os.environ.get("GB10_FUSED_FP8_CE", "0") == "1"
     if enable_fused:
         from gb10.fused_fp8_ce import fused_loss
