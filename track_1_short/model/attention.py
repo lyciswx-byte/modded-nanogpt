@@ -190,7 +190,11 @@ class CausalSelfAttention(nn.Module):
         else:
             # Validation (no_grad): a bf16 projection and the forward norm/rotary kernel.
             qkv_weight = sa_lambdas[0] * torch.cat((qk_w, v_w)).type_as(x)
-            qkv = F.linear(x, qkv_weight)
+            if GB10_NATIVE:
+                from gb10.fp8_linear import dispatch as gb10_linear
+                qkv = gb10_linear(x, qkv_weight)
+            else:
+                qkv = F.linear(x, qkv_weight)
             qk, v = qkv.split((2 * H * self.qk_dim, H * self.v_dim), dim=-1)
             qk = qk.view(B, T, 2 * H, self.qk_dim)
             v = v.view(B, T, H, self.v_dim)
@@ -244,4 +248,7 @@ class CausalSelfAttention(nn.Module):
         y = y.contiguous().view(B, T, H * self.v_dim) # re-assemble all head outputs side by side
         # The output scale rounds to bf16 in the one product with O, with or without o_gain.
         o_scale = sa_lambdas[1] if attn_args.o_gain is None else sa_lambdas[1] * attn_args.o_gain
+        if GB10_NATIVE:
+            from gb10.fp8_linear import dispatch as gb10_linear
+            return gb10_linear(y, o_scale * o_w.type_as(y))
         return F.linear(y, o_scale * o_w.type_as(y))
