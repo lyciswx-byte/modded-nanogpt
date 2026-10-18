@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-from kernels import get_kernel
 from torch import Tensor, nn
 
 from track_1_short.perf.kernels.qkv_rope import PackedFP8QKV, qk_norm_rope_forward
@@ -30,6 +29,7 @@ def load_flash_attn3():
     """The pinned, checksum-verified patched FA3 kernel's flash_attn_interface."""
     # The publisher is a personal Hub account, which kernels>=0.16 does not trust by default. Trust
     # comes instead from the pinned commit and the binary checksum below.
+    from kernels import get_kernel  # H100-only dependency, never imported on GB10
     fa3 = get_kernel(FA3_REPO, revision=FA3_REVISION, trust_remote_code=True)
     binary = next(pathlib.Path(fa3.__file__).parent.glob("_flash_attn3_cuda_*.so"))
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
