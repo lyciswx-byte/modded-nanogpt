@@ -222,6 +222,10 @@ def distributed_data_generator(filename_pattern: str, num_tokens: int, max_seq_l
         _cum_lengths = _cum_lengths.to(dtype=torch.int32)
         _ngram_ids = ngram_row_ids(_inputs)
         inputs, targets, cum_seqlens, ngram_ids = staging.upload(_inputs, _targets, _cum_lengths, _ngram_ids)
+        if os.environ.get("GB10_PROFILE") == "1":
+            # sm_121 native segmented SDPA iterates document boundaries on host.
+            # Keep the already-pinned CPU vector: avoid 7 GPU->host syncs per step.
+            cum_seqlens = _cum_lengths
 
         new_params = yield Batch(
             inputs=inputs,
