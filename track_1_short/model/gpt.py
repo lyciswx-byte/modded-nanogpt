@@ -502,7 +502,7 @@ class GPT(nn.Module):
         else bf16 (validation)."""
         if GB10_NATIVE:
             # Hopper's descriptor/TMA MLP kernel is not a valid sm_121 default.
-            return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj)
+            return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
         if fp8_args is None:
             return ReLUSqrdMLP(x_normed, c_fc, c_proj)
         return ReLUSqrdMLP(x_normed, c_fc, c_proj, *fp8_args)
