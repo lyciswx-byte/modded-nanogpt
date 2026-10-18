@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 
 def graph_sdpa(q, k, v, cum_seqlens, left_window, scale):
-    if cum_seqlens.device.type != "cuda":
+    if q.is_cuda and cum_seqlens.device.type != "cuda":
         raise RuntimeError("GB10 CUDA Graph requires device-resident cu_seqlens, "
                            "not host-side segmented SDPA")
     if q.device != cum_seqlens.device:
