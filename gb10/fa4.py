@@ -25,7 +25,7 @@ def load_fa4():
                            "see gb10/README.md") from exc
     # The SM120 bundle contains an alternative warp-MMA implementation,
     # not an SM100 tcgen05/TMEM binary or SM90 WGMMA.
-    kernel = get_kernel(FA4_MODEL)
+    kernel = get_kernel(FA4_MODEL, version=1)
     fn = kernel.flash_attn_varlen_func
     try:
         sig = inspect.signature(fn)
@@ -77,7 +77,17 @@ def dispatch(q, k, v, seqlens, window, scale):
     backend = os.environ.get("GB10_ATTN_BACKEND", "sdpa").lower()
     if backend == "fa4":
         return packed_fa4(q, k, v, seqlens, window, scale)
-    if backend == "sdpa":
+    if backend == "hybrid":
+        # FA4's launch overhead is measurable for tiny segments on SM121.
+        # The threshold must be selected from actual GB10 forward+backward
+        # timings, not Hopper benchmarks. No automatic fallback on FA4 error.
+        cpu = seqlens.cpu() if seqlens.device.type != "cpu" else seqlens
+        raw = cpu.tolist()
+        positive = [b-a for a,b in zip(raw, raw[1:]) if b>a]
+        threshold = int(os.environ.get("GB10_FA4_MIN_SEQLEN", "384"))
+        if positive and max(positive) >= threshold:
+            return packed_fa4(q, k, v, seqlens, window, scale)
+    if backend in ("sdpa", "hybrid"):
         from gb10.attention import segmented_sdpa
         return segmented_sdpa(q, k, v, seqlens, window, scale)
-    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa' or 'fa4' (no silent kernel fallback)")
+    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa', 'fa4' or 'hybrid'")
