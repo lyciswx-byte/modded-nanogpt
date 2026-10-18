@@ -19,7 +19,6 @@ import os
 import torch
 
 from track_1_short.data import ScheduledBatches
-from track_1_short.ngram_table import is_update_step
 from track_1_short.perf.cuda_graphs.baked_addresses import baked_addresses, assert_addresses_unchanged
 from track_1_short.perf.cuda_graphs.capture_plan import plan_warmup, step_graph_key
 from track_1_short.perf.cuda_graphs.optimizer_graphs import AnvilBankGraphs, assert_banks_alias_live_state
@@ -71,7 +70,7 @@ def capture_all(model, manager, table, value_pull, sampler, schedule,
                             value_pull,
                             max(s.batch_size for s in schedule.stages) // 2,
                             device)
-    from track_1_short.perf.deferred_gathers import DeferredGathers, DEFERRED_LABELS
+    from track_1_short.perf.deferred_gathers import DeferredGathers
     # Native GB10 quantization and CE are inside the step forward capture;
     # there is no separate FP8 weight cache refresh to capture.
     deferred = DeferredGathers(value_pull, NoFp8Refresh())
@@ -113,6 +112,24 @@ def capture_all(model, manager, table, value_pull, sampler, schedule,
     step_graphs.seal()
     optimizer_graphs.seal()
     torch.cuda.synchronize()
+    reserved = torch.cuda.memory_reserved(device) / (2 ** 30)
+    # A GB10's 128GB is CPU/GPU SHARED, not HBM independent of RAM.
+    # Refuse to enter the timed run if capture pools already consumed too
+    # much unified address space; do not silently rely on host paging.
+    max_reserved = float(os.environ.get("GB10_GRAPH_MAX_RESERVED_GIB", "96"))
+    if reserved > max_reserved:
+        raise MemoryError(f"GB10 captured graphs reserve {reserved:.1f}GiB > "
+                          f"GB10_GRAPH_MAX_RESERVED_GIB={max_reserved:.1f}. "
+                          "Lower GB10_GRAPH_TILES_PER_GROUP, stage batches or ngram rows.")
+    from gb10.preflight import _mem_available_bytes
+    available = _mem_available_bytes() / (2 ** 30)
+    min_available = float(os.environ.get("GB10_GRAPH_MIN_HOST_AVAILABLE_GIB", "8"))
+    if available < min_available:
+        raise MemoryError(f"GB10 only has {available:.1f}GiB shared RAM available "
+                          f"after captures, need >= {min_available:.1f}GiB. "
+                          "Reduce table size/graph shapes before training.")
+    batches_print(f"[GB10 graph] reserved={reserved:.1f}GiB, "
+                  f"host_available={available:.1f}GiB")
 
     before = baked_addresses(model, manager.optimizer, step_graphs)
     model.zero_grad(set_to_none=True)
