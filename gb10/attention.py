@@ -51,7 +51,7 @@ def segmented_sdpa(q, k, v, cum_seqlens, left_window: int, scale: float):
     """Exact document boundaries; never construct a global batch NxN mask.
 
     Padded cum_seqlens begins at zero and ends with duplicated terminal T.
-    GB10's CPU-pinned loader keeps boundaries host-resident so seven attention
+    GB10's loader retains boundaries on the CPU so seven attention
     layers do not each pay GPU->CPU synchronization.
     """
     assert q.ndim == k.ndim == v.ndim == 3
