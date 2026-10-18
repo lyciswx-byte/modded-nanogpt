@@ -205,3 +205,80 @@ network time are measured.
 References: NVIDIA DGX Spark hardware/user guide and NVIDIA's "NCCL for
 Multiple Sparks" playbook. Review NIC topology and container NCCL transport
 on each physical setup rather than assuming the full 200Gbps link is in use.
+
+## SM121 accelerated kernels (experimental, implemented on this branch)
+
+The new kernels are **not** copies of the Hopper implementation:
+- `gb10/fa4.py`: FA4/CuTe SM120 consumer-Blackwell bundle adapter, variable-length
+  and mixed `(Dqk, Dv) = (64,128), (64,64), (128,128)`. This is a
+  hardware-specialized **integration of an externally maintained FA4 kernel**,
+  not a claim that we authored the third-party FA4 CUDA/CuTe implementation.
+  It requires the `SecondNatureComputing/flash-attn-4-sm120` version-1 bundle.
+  `hybrid` dispatch selects FA4 at/above `GB10_FA4_MIN_SEQLEN` and native
+  per-segment SDPA for shorter batches. The FA4 path is never silently invoked
+  if dependencies are missing. See
+  https://huggingface.co/SecondNatureComputing/flash-attn-4-sm120
+  (BSD-3-Clause).
+- `gb10/fp8_linear.py`: new Triton 1024-element per-program E4M3 quantizer,
+  dynamic per-tensor amax scales with saturation, and SM121-architecture
+  dispatched `torch._scaled_mm` GEMM for QKV, attention-O, both MLP paths
+  and LM projection. Unlike H100's `tcgen05` or `WGMMA`, this requires
+  a runtime supporting warp-level FP8 MMA on **SM121**. For the initial
+  accelerated route, backward GEMMs intentionally retain BF16 precision;
+  benchmark before attempting FP8 backward. The weight transpose follows
+  the bank's actual layout, not a standard `nn.Linear` down weight.
+- `gb10/fused_fp8_ce.py`: new tiled Triton fused softcap / log-sum-exp /
+  multi-token loss / prefix loss / gradient for **FP8 E4M3 logits**.
+  First stage sums over 1024-class tiles, second generates row loss and
+  normalization, backward generates BF16 logit gradients directly without
+  a probability tensor. Target duplication and MTP boundary masks are handled.
+  Quantization and the straight-through logit gradient introduce numerical
+  error relative to the stock FP8-H100 kernel; the code requires on-device
+  parity testing before use.
+
+**How to enable** — first install the optional accelerated dependencies inside
+your existing GB10 PyTorch Docker container without allowing pip to replace
+the vendor-tested torch, triton or CUDA stack:
+
+```bash
+python -m pip install --no-deps -r gb10/requirements-accelerated.txt
+python -m unittest gb10.test_attention gb10.test_loss gb10.test_model_math -v
+python -m unittest gb10.test_accelerated -v
+python -m gb10.bench_accelerators --kind all
+```
+
+One GB10 host at a time may run these benchmarks. The two-host trainer still
+requires both containers to participate in the same process group.
+
+After GPU tests pass on BOTH hosts, set identical flags on both hosts:
+
+```bash
+export GB10_ATTN_BACKEND=hybrid      # sdpa | fa4 | hybrid
+export GB10_FA4_MIN_SEQLEN=384       # threshold is a profiling starting point
+export GB10_FP8_LINEAR=1             # quantize/GEMM with sm121-capable PyTorch
+export GB10_FUSED_FP8_CE=1           # sampled and full CE over E4M3 logits
+export GB10_SMOKE_STEPS=8
+bash gb10/run_two_nodes.sh
+```
+
+The trainer executes fail-closed accelerated-kernel parity tests **on each
+rank before allocating the 21M-row hash table**. It does not catch and
+silently mask compilation or numerical errors; if a kernel is unsupported,
+the run should stop. Selectively disable switches to bisect an incompatibility.
+For a BF16 baseline, omit the four accelerator exports.
+
+**Caveats:** SM121 / consumer Blackwell cannot use SM100's `tcgen05`/TMEM
+path or H100's WGMMA binaries. The external SM120 FA4 has documented
+shape and correctness coverage, but untested packed/varlen memory layouts
+may still fail on some driver/FA4 releases. Its short-sequence launch
+overhead can exceed the gain; benchmark both forward and backward. E4M3
+quantization may raise the final FineWeb loss. The accelerated route has
+not been executed on your two GB10 machines yet, and neither its optimal
+dispatch threshold nor an end-to-end speedup has been established.
+
+**Acceptance criteria for turning on by default:** exact batch-boundary
+matching; per-head shape and forward/backward parity tests on sm_121;
+NaN-free 8/128/full-step smokes on both nodes; sampled/full CE target
+mapping parity; measured per-stage latency, peak unified memory,
+NCCL throughput; and final validation vs the BF16 baseline across
+multiple seeds. Until then, BF16 SDPA is the default.
