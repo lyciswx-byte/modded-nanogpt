@@ -8,7 +8,13 @@ real sm_121 machines. This program intentionally does NOT claim record timing.
 """
 import os
 os.environ["GB10_PROFILE"] = "1"
-os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+# GB10's driver/runtime may not support expandable_segments with graph pools.
+# Prefer the native CUDA allocator in graph mode; leave container overrides
+# untouched so vendor-tuned PyTorch images can select their own allocator.
+os.environ.setdefault(
+    "PYTORCH_ALLOC_CONF",
+    "backend:native" if os.environ.get("GB10_CUDA_GRAPHS") == "1" else "expandable_segments:True",
+)
 
 import gc
 import time
