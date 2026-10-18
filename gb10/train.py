@@ -182,20 +182,29 @@ def main():
         model.complete_yarn_tables()
         assert args.val_tokens % args.val_batch_size == 0
         val_steps = args.val_tokens // args.val_batch_size
-        val_batches = [next(viter) for viter in [val_loader()] for _ in range(val_steps)]
-        val_pulls = table.eval_pulls([b.ngram_ids for b in val_batches])
-        for pull in val_pulls:
-            table.land(pull)
+        # Finish training-clock measurement before validation. This port
+        # intentionally does not claim the original H100 benchmark timing.
         torch.cuda.synchronize()
         train_seconds = time.perf_counter() - t0
         model.eval()
         loss = torch.zeros((), device=env.device)
+        # 160 full-size validation batches retained simultaneously would pin
+        # gigabytes of unified RAM, staging buffers and n-gram request metadata.
+        # A 2-4 batch window bounds memory while amortizing row ID exchanges.
+        window = int(os.environ.get("GB10_VAL_PULL_WINDOW", "2"))
+        if not 1 <= window <= 8:
+            raise ValueError("GB10_VAL_PULL_WINDOW must be in [1,8]")
+        viter = val_loader()
         with torch.no_grad():
-            for batch, pull in zip(val_batches, val_pulls):
-                table.land(pull)
-                loss += model(batch.inputs, batch.targets, batch.cum_seqlens,
-                              table.slots(pull, batch.ngram_ids),
-                              manager.get_forward_args()).mean()
+            for offset in range(0, val_steps, window):
+                group = [next(viter) for _ in range(min(window, val_steps-offset))]
+                pulls = table.eval_pulls([batch.ngram_ids for batch in group])
+                for batch, pull in zip(group, pulls):
+                    table.land(pull)
+                    loss += model(batch.inputs, batch.targets, batch.cum_seqlens,
+                                  table.slots(pull, batch.ngram_ids),
+                                  manager.get_forward_args()).mean()
+                del group, pulls
         loss /= val_steps
         dist.reduce(loss, dst=0, op=dist.ReduceOp.AVG)
         print0(f"[GB10] val_loss={float(loss):.6f} train_seconds={train_seconds:.3f} "
