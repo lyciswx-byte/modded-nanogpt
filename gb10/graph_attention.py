@@ -14,6 +14,30 @@ import torch
 import torch.nn.functional as F
 
 
+def _segment_ids(cum_seqlens, q_pos, k_pos, *, mode):
+    """Device-only search, reusable with mutable boundaries during graph replay.
+
+    The fused variant replaces two searchsorted launches with one, at the cost
+    of one concatenation. Its speed must be measured on SM121 before selecting
+    it as a global default. Both variants have identical numerical semantics.
+    """
+    offsets = cum_seqlens.contiguous()
+    if mode == "separate":
+        return (
+            torch.searchsorted(offsets, q_pos.contiguous(), right=True),
+            torch.searchsorted(offsets, k_pos.contiguous(), right=True),
+        )
+    if mode != "fused":
+        raise ValueError("GB10_GRAPH_SEGMENT_LOOKUP must be separate or fused")
+    n_query = q_pos.numel()
+    combined = torch.cat((q_pos.reshape(-1), k_pos.reshape(-1)))
+    doc_ids = torch.searchsorted(offsets, combined, right=True)
+    return (
+        doc_ids[:n_query].reshape_as(q_pos),
+        doc_ids[n_query:].reshape_as(k_pos),
+    )
+
+
 def graph_sdpa(q, k, v, cum_seqlens, left_window, scale):
     if q.is_cuda and cum_seqlens.device.type != "cuda":
         raise RuntimeError("GB10 CUDA Graph requires device-resident cu_seqlens, "
@@ -48,8 +72,10 @@ def graph_sdpa(q, k, v, cum_seqlens, left_window, scale):
         # can replay with different document boundaries within the same shape.
         # searchsorted(..., right=True) makes position exactly at a boundary
         # belong to the new segment, including duplicated padded endpoints.
-        query_doc = torch.searchsorted(cum_seqlens.contiguous(), q_pos.contiguous(), right=True)
-        key_doc = torch.searchsorted(cum_seqlens.contiguous(), k_pos.contiguous(), right=True)
+        query_doc, key_doc = _segment_ids(
+            cum_seqlens, q_pos, k_pos,
+            mode=os.environ.get("GB10_GRAPH_SEGMENT_LOOKUP", "separate"),
+        )
         delta = q_pos[:, :, None] - k_pos[:, None, :]
         allowed = (
             valid_q[:, :, None] & valid_k[:, None, :]
