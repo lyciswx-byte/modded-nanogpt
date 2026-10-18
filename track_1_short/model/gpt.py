@@ -502,6 +502,10 @@ class GPT(nn.Module):
         else bf16 (validation)."""
         if GB10_NATIVE:
             # Hopper's descriptor/TMA MLP kernel is not a valid sm_121 default.
+            # As in record #92, validation uses BF16, not the approximate
+            # FP8 training pathway (including the output projection).
+            if not self.training:
+                return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
             from gb10.fp8_linear import dispatch as gb10_linear
             intermediate = gb10_linear(x_normed, c_fc)
             return gb10_linear(F.relu(intermediate).square(), c_proj.T)
