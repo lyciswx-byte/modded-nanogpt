@@ -17,6 +17,7 @@ import torch.distributed as dist
 
 from gb10.eager import EagerStepRunner, NoFp8Refresh
 from gb10.preflight import check_runtime, memory_plan
+from gb10.selftest import run_selected_tests
 from track_1_short.canonical_mask import BackgroundCanonicalMask
 from track_1_short.config import (
     Hyperparameters, TRAINING_STAGES, LR_COOLDOWN_FRAC,
@@ -61,6 +62,7 @@ def gb10_step(manager, step_runner, row_prefetch, sampler, batches, gathers, ste
 
 def main():
     check_runtime()
+    run_selected_tests()  # fail closed before allocating the large sparse model
     args = Hyperparameters()
     env = setup_distributed()
     if args.train_seed is not None:
