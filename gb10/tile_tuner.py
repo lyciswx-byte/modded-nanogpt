@@ -26,13 +26,12 @@ class Tile:
 
 # SM121 can be register-/occupancy-limited; don't assume Hopper tiles win.
 CANDIDATES = (
-    Tile(32, 64, 32, 4, 2),
-    Tile(64, 32, 32, 4, 2),
+    # Square M/N tiles ONLY: the inherited symmetric kernels mirror each
+    # computed block to (N,M), and rectangular blocks can overlap writes.
+    Tile(32, 32, 32, 4, 2),
     Tile(64, 64, 32, 4, 2),
     Tile(64, 64, 64, 4, 2),
-    Tile(64, 128, 32, 4, 2),
-    Tile(64, 128, 64, 4, 3),
-    Tile(128, 64, 32, 4, 3),
+    Tile(128, 128, 32, 4, 3),
     Tile(128, 128, 64, 8, 3),
 )
 _CHOSEN = {}
@@ -40,10 +39,14 @@ _STATS = {}
 
 
 def _key(kind, a):
-    return (kind, tuple(a.shape), tuple(a.stride()), a.dtype)
+    # Cache should not mix CUDA contexts or output layouts in a future 2-GPU
+    # per-process configuration. Each GB10 still launches 1 worker today.
+    return (kind, str(a.device), tuple(a.shape), tuple(a.stride()), a.dtype)
 
 
 def _launch(kind, a, out, tile, *, alpha=1., beta=0.):
+    if tile.m != tile.n:
+        raise ValueError("symmetric kernel mirror stores require square M/N tiles")
     M, K = a.shape[-2:]
     side = M if kind == "xxt" else K
     if kind == "poly":
