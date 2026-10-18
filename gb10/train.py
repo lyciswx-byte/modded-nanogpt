@@ -64,6 +64,9 @@ def gb10_step(manager, step_runner, row_prefetch, sampler, batches, gathers, ste
 def main():
     check_runtime()
     run_selected_tests()  # fail closed before allocating the large sparse model
+    if os.environ.get("GB10_TUNE_TRITON_TILES", "0") == "1":
+        from gb10.triton_tiles import calibrate
+        calibrate()  # quant/CE tiles, before CUDA graph capture
     args = Hyperparameters()
     env = setup_distributed()
     if args.train_seed is not None:
