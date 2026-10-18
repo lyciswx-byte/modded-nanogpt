@@ -19,3 +19,9 @@ jobs:
         run: |
           grep -q 'None if GB10_NATIVE else load_flash_attn3()' track_1_short/model/attention.py
           grep -q 'run_selected_tests()' gb10/train.py
+      - name: Install CPU PyTorch for algorithmic reference tests
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Reference attention / MTP CE / MLP backward tests on CPU
+        run: |
+          python -m unittest gb10.test_attention gb10.test_loss gb10.test_model_math -v
