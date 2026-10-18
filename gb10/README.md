@@ -385,3 +385,19 @@ and graph replay time, graph-pool reserved GiB and gradient parity after
 changing the live document offsets. A small isolated attention benchmark
 is not proof of an end-to-end two-machine speedup. Record settings and
 driver/PyTorch versions with each result.
+
+## Post-implementation audit fixes (2026-10-18)
+
+See [AUDIT.md](AUDIT.md) for severity, implementation details and acceptance.
+Major changes: import-time **Hopper SM90 NVRTC CE** was suppressed for
+`GB10_PROFILE=1`; symmetric Gram autotuning now excludes mirrored rectangular
+M/N Tiles; FineWeb validation streams `GB10_VAL_PULL_WINDOW=2` batches rather
+than retaining ~160 GPU batches; FP8 CE calibration selects a separate
+`GB10_CE_TUNE_ROWS=64` block policy at 10,240 / 14,336 / 24,576 / 50,304
+vocabulary widths; and graph mode defaults to PyTorch's native allocator
+unless the container already provides `PYTORCH_ALLOC_CONF`.
+
+These are **code-level corrections**. Only CI CPU/reference checks have been
+run; an actual 2×GB10 end-to-end smoke, numerical FP8 graph backward and
+full FineWeb validation remain hardware acceptance blockers. Do not report
+this branch as measured-faster or record-equivalent until those tests pass.
