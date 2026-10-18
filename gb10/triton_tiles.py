@@ -14,6 +14,7 @@ import triton
 # Cold defaults, used by correctness tests that have not prewarmed.
 _QUANT = 1024
 _CE = 1024
+_CE_BY_VOCAB = {}
 _FROZEN = False
 
 
@@ -21,8 +22,9 @@ def quant_block():
     return _QUANT
 
 
-def ce_block():
-    return _CE
+def ce_block(vocab_size=None):
+    # All #92 candidate sizes use separate static CUDA Graph keys.
+    return _CE_BY_VOCAB.get(int(vocab_size), _CE) if vocab_size is not None else _CE
 
 
 def _time(call, reps=8):
@@ -42,7 +44,7 @@ def _time(call, reps=8):
 def calibrate():
     global _QUANT, _CE, _FROZEN
     if _FROZEN:
-        return (_QUANT, _CE)
+        return (_QUANT, dict(_CE_BY_VOCAB))
     if torch.cuda.is_current_stream_capturing():
         raise RuntimeError("SM121 tile calibration cannot run during CUDA graph capture")
     if torch.cuda.get_device_capability() != (12, 1):
@@ -73,35 +75,41 @@ def calibrate():
             print(f"[SM121] quant tile {size} failed: {exc}",flush=True)
     if "_quant_perf" not in locals():
         raise RuntimeError("No valid SM121 FP8 quant Tile")
-    rows, vocab = 64, 14336
-    qlogits = torch.zeros((rows, vocab), dtype=torch.float8_e4m3fn, device="cuda")
-    scale = torch.tensor([.01], device="cuda", dtype=torch.float32)
-    best_ce = None
-    for size in (256, 512, 1024, 2048):
-        chunks = triton.cdiv(vocab, size)
-        part = torch.empty((rows, chunks), device="cuda", dtype=torch.float32)
-        try:
-            def run():
-                _partials[(rows, chunks)](qlogits, scale, part,
-                                         vocab, chunks, size, num_warps=4)
-            run()
-            torch.cuda.synchronize()
-            expected = torch.exp(
-                23 * torch.sigmoid((qlogits.float() * scale + 5)/7.5) - 23
-            ).sum(-1)
-            if not torch.allclose(part.sum(-1), expected, rtol=.002, atol=.01):
-                print(f"[SM121] reject CE tile {size}: numerical mismatch",flush=True)
-                continue
-            latency = _time(run)
-            if best_ce is None or latency < best_ce[0]:
-                best_ce = (latency, size)
-        except Exception as exc:
-            print(f"[SM121] CE tile {size} failed: {exc}",flush=True)
-    if best_ce is None:
-        raise RuntimeError("No valid SM121 CE tile")
-    _CE = best_ce[1]
+    rows = int(os.environ.get("GB10_CE_TUNE_ROWS", "64"))
+    if not 1 <= rows <= 1024:
+        raise ValueError("GB10_CE_TUNE_ROWS must be in [1,1024]")
+    for vocab in (10240, 14336, 24576, 50304):
+        qlogits = torch.zeros((rows, vocab), dtype=torch.float8_e4m3fn, device="cuda")
+        scale = torch.tensor([.01], device="cuda", dtype=torch.float32)
+        expected = torch.exp(
+            23 * torch.sigmoid((qlogits.float() * scale + 5) / 7.5) - 23
+        ).sum(-1)
+        best_ce = None
+        for size in (256, 512, 1024, 2048):
+            chunks = triton.cdiv(vocab, size)
+            part = torch.empty((rows, chunks), device="cuda", dtype=torch.float32)
+            try:
+                def run():
+                    _partials[(rows, chunks)](qlogits, scale, part,
+                                             vocab, chunks, size, num_warps=4)
+                run()
+                torch.cuda.synchronize()
+                if not torch.allclose(part.sum(-1), expected, rtol=.002, atol=.01):
+                    print(f"[SM121] reject CE tile {size} at V={vocab}: numerical mismatch",
+                          flush=True)
+                    continue
+                latency = _time(run)
+                if best_ce is None or latency < best_ce[0]:
+                    best_ce = (latency, size)
+            except Exception as exc:
+                print(f"[SM121] CE tile {size} at V={vocab} failed: {exc}", flush=True)
+        if best_ce is None:
+            raise RuntimeError(f"No valid SM121 CE tile for vocab={vocab}")
+        _CE_BY_VOCAB[vocab] = best_ce[1]
+        print(f"[SM121 tiles] CE vocab={vocab}, tile={best_ce[1]}, "
+              f"partial_kernel={best_ce[0]*1000:.1f}us", flush=True)
+    _CE = _CE_BY_VOCAB[14336]
     _FROZEN = True
-    print(f"[SM121 tiles] FP8 quant={_QUANT} {_quant_perf*1000:.1f}us, "
-          f"fused CE={_CE} {best_ce[0]*1000:.1f}us; frozen before graph capture",
-          flush=True)
-    return (_QUANT, _CE)
+    print(f"[SM121 tiles] FP8 quant={_QUANT} {_quant_perf*1000:.1f}us; "
+          f"CE tiles={_CE_BY_VOCAB}; frozen before graph capture", flush=True)
+    return (_QUANT, dict(_CE_BY_VOCAB))
