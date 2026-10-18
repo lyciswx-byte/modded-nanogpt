@@ -92,7 +92,8 @@ def main():
                                                      align_to_bos=False)
 
     model = GPT(vocab_size=50257, num_layers=11, num_heads=6, head_dim=128, model_dim=768,
-                max_seq_len=val_step, ngram_dim=NGRAM_DIM, world_size=env.world_size,
+                max_seq_len=max(val_step, MAX_CYCLE_STEPS * max_step),
+                ngram_dim=NGRAM_DIM, world_size=env.world_size,
                 device=env.device).cuda()
     model.cast_matrix_weights_bf16()
     for p in model.parameters():
