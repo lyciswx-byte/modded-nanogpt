@@ -28,6 +28,7 @@ Provenance: record #360 (ANVIL2).
 """
 import math
 from dataclasses import dataclass
+import os
 
 import numpy as np
 import torch
@@ -74,6 +75,7 @@ class SampledLoss:
     target_pos: Tensor  # (T_max,) int64: position in C of each token's target (first T rows are live)
     prefix_pos: Tensor  # (T_max,) int64: position in C of each token's prefix target, -1 if absent
     vocab_pos: Tensor   # (V,) int32: position in C of each class, -1 if not a candidate
+    candidate_ids: Tensor | None = None  # GB10 BF16 native CE gathers weight columns directly
 
 
 class CandidateBuilder:
@@ -242,6 +244,13 @@ class SampledSoftmax:
     def _gather_rows(self, lm_head_f8_col: Tensor, P: int, inputs: SampledLoss):
         """Copy the candidates' rows out of the fp8 lm_head cache and rebuild C's inverse map."""
         cand = self.candidates[:P]
+        if os.environ.get("GB10_PROFILE") == "1":
+            # Candidate order still maps all token targets; avoid the FP8/Hopper
+            # transpose/gather kernel. The eager BF16 CE gathers these columns.
+            inputs.candidate_ids = cand
+            inputs.vocab_pos.fill_(-1)
+            inputs.vocab_pos.index_copy_(0, cand, self.arange[:P])
+            return
         # The cache is (D, V) with strides (1, D), so its transpose is a contiguous (V, D) row table;
         # the uint8 views move identical bytes.
         torch.index_select(lm_head_f8_col.T.view(torch.uint8), 0, cand, out=inputs.rows.view(torch.uint8))
