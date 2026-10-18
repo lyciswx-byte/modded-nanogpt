@@ -78,7 +78,9 @@ def main():
     run_steps = schedule.total_steps if not stop else min(stop, schedule.total_steps)
     if run_steps <= 0:
         raise ValueError("GB10_SMOKE_STEPS must be positive")
-    print0 = lambda *a, **kw: print(*a, flush=True, **kw) if env.master_process else None
+    def print0(message, console=False):
+        if env.master_process:
+            print(message, flush=True)
     print0(f"[GB10] 2x sm_121, eager BF16/SDPA, train_steps={run_steps}/{schedule.total_steps}, "
            f"local_tokens={max_step}, local_val_tokens={val_step}")
 
