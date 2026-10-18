@@ -76,6 +76,11 @@ def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
 def dispatch(q, k, v, seqlens, window, scale):
     import os
     backend = os.environ.get("GB10_ATTN_BACKEND", "sdpa").lower()
+    if backend == "graph":
+        # GPU-resident dynamic document masks: same captured graph supports
+        # different BOS boundaries at fixed token and cu_seqlens shapes.
+        from gb10.graph_attention import graph_sdpa
+        return graph_sdpa(q, k, v, seqlens, window, scale)
     if backend == "fa4":
         return packed_fa4(q, k, v, seqlens, window, scale)
     if backend == "hybrid":
@@ -91,4 +96,4 @@ def dispatch(q, k, v, seqlens, window, scale):
     if backend in ("sdpa", "hybrid"):
         from gb10.attention import segmented_sdpa
         return segmented_sdpa(q, k, v, seqlens, window, scale)
-    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa', 'fa4' or 'hybrid'")
+    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa', 'fa4', 'hybrid' or 'graph'")
