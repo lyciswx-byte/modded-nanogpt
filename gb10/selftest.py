@@ -9,7 +9,7 @@ import unittest
 
 def run_selected_tests():
     selected = []
-    if os.environ.get("GB10_ATTN_BACKEND", "sdpa") == "fa4":
+    if os.environ.get("GB10_ATTN_BACKEND", "sdpa") in ("fa4", "hybrid"):
         selected.append("test_fa4_varlen_mixed_heads_forward_backward")
     if os.environ.get("GB10_FP8_LINEAR", "0") == "1":
         selected.append("test_fp8_projection_and_grads")
