@@ -107,7 +107,7 @@ class _FusedFP8CE(torch.autograd.Function):
         assert targets.dtype==prefix_positions.dtype==torch.int64
         q,s=quantize_e4m3(logits)
         from gb10.triton_tiles import ce_block
-        BK=ce_block()
+        BK=ce_block(vocab)
         chunks=triton.cdiv(vocab,BK)
         partial=torch.empty((rows,chunks),device=logits.device,dtype=torch.float32)
         logz=torch.empty((rows,),device=logits.device,dtype=torch.float32)
@@ -129,7 +129,7 @@ class _FusedFP8CE(torch.autograd.Function):
         rows,vocab=ctx.shape
         dx=torch.empty((rows,vocab),dtype=torch.bfloat16,device=q.device)
         from gb10.triton_tiles import ce_block
-        bk=ce_block()
+        bk=ce_block(vocab)
         _backward[(rows,triton.cdiv(vocab,bk))](
             q,s,logz,targets,pref,weights,pref_w,grad_loss.contiguous(),dx,
             vocab,ctx.start,ctx.total,weights.numel(),bk,num_warps=4)
