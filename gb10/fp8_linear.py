@@ -32,7 +32,9 @@ def quantize_e4m3(x):
         max_abs=torch.nan_to_num(x.float().abs().amax(),nan=0.0,posinf=448,neginf=448)
         scale=(max_abs.float()*1.05/448.).clamp(min=1e-8).contiguous()
         out=torch.empty(x.shape,device=x.device,dtype=torch.float8_e4m3fn)
-        _quantize[(triton.cdiv(x.numel(),1024),)](x,out,scale,x.numel(),1024,num_warps=4)
+        from gb10.triton_tiles import quant_block
+        block = quant_block()
+        _quantize[(triton.cdiv(x.numel(),block),)](x,out,scale,x.numel(),block,num_warps=4)
     return out,scale
 
 
