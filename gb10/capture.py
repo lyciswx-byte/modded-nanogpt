@@ -56,15 +56,14 @@ def prewarm_tiles_if_requested(optimizer):
 
 def capture_all(model, manager, table, value_pull, sampler, schedule,
                 training_loader_factory, prefetch_staging, run_steps, device,
-                gb10_step, batches_print):
+                gb10_step, batches_print, optimizer_graphs):
     """Pre-capture and reset all GPU training compute before timed run."""
     if not enabled():
         raise RuntimeError("call capture_all only when GB10_CUDA_GRAPHS=1")
     prewarm_tiles_if_requested(manager.optimizer)
-    optimizer_graphs = AnvilBankGraphs(device)
-    # Optimizer's callback is wired to this same object BEFORE constructing
-    # TrainingManager (gb10/train.py), and thus its state is stable.
-    assert manager.optimizer.bank_update.__self__ is not None if False else True
+    # The optimizer's bank_update callback refers to THIS owner, created
+    # before TrainingManager. Never create a second owner in capture_all.
+    assert manager.optimizer.bank_update.__self__ is optimizer_graphs
     # train.py supplies a manager whose bank_update points at graphs.update.
     step_keys = [step_graph_key(schedule, sampler.counts, step, 2)
                  for step in range(run_steps)]
