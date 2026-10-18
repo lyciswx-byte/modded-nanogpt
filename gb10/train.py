@@ -2,7 +2,7 @@
 
 Launch through gb10/run_two_nodes.sh on each machine. GB10_PROFILE is set
 before any stock imports, so the H100 patched FA3 .so is never loaded.
-No H100 CUDA graphs/FP8/TMA kernels are used in the training forward/loss.
+The opt-in SM121 graph mode captures forward/backward, FP8 arithmetic and ANVIL banks.
 The n-gram, value-embedding and ANVIL Triton paths remain to be validated on
 real sm_121 machines. This program intentionally does NOT claim record timing.
 """
@@ -16,6 +16,7 @@ import torch
 import torch.distributed as dist
 
 from gb10.eager import EagerStepRunner, NoFp8Refresh
+from gb10.capture import enabled as graphs_enabled, check_graph_configuration, graph_owners, capture_all, prewarm_tiles_if_requested
 from gb10.preflight import check_runtime, memory_plan
 from gb10.selftest import run_selected_tests
 from track_1_short.canonical_mask import BackgroundCanonicalMask
@@ -80,10 +81,14 @@ def main():
     run_steps = schedule.total_steps if not stop else min(stop, schedule.total_steps)
     if run_steps <= 0:
         raise ValueError("GB10_SMOKE_STEPS must be positive")
+    check_graph_configuration(run_steps)
     def print0(message, console=False):
         if env.master_process:
             print(message, flush=True)
-    print0(f"[GB10] 2x sm_121, eager BF16/SDPA, train_steps={run_steps}/{schedule.total_steps}, "
+    print0(f"[GB10] 2x sm_121, graphs={graphs_enabled()} "
+           f"attn={os.environ.get('GB10_ATTN_BACKEND', 'sdpa')}, "
+           f"gram={os.environ.get('GB10_GRAM_BACKEND', 'aten')}, "
+           f"train_steps={run_steps}/{schedule.total_steps}, "
            f"local_tokens={max_step}, local_val_tokens={val_step}")
 
     staging = PinnedBatchStaging(max(max_step, val_step),
@@ -114,20 +119,35 @@ def main():
                              model_dim=model.lm_head.in_features,
                              max_rows=max_step, rank=env.rank, world_size=env.world_size,
                              device=env.device)
-    manager = TrainingManager(model, schedule, bank_update=anvil_bank_update)
+    # The graph owner must exist BEFORE TrainingManager to preserve the callback
+    # identity and the ANVIL bank buffers captured by optimizer graphs.
+    optimizer_graphs = graph_owners(env.device) if graphs_enabled() else None
+    manager = TrainingManager(
+        model, schedule,
+        bank_update=optimizer_graphs.update if optimizer_graphs is not None else anvil_bank_update,
+    )
     value_pull = ValueEmbedPull(model.value_embeds, model.vocab_size, manager.optimizer,
                                 rank=env.rank, world_size=env.world_size, device=env.device)
     averages = TailAverages(manager.optimizer, env.rank, value_embed_updates=is_update_step,
                             total_steps=schedule.total_steps)
-    runner = EagerStepRunner(model, manager.optimizer, table, value_pull)
-    gathers = DeferredGathers(value_pull, NoFp8Refresh())
-
     # Keep #92's prefix-token objective and same per-rank construction scheme.
     model.prefix_table.copy_(build_prefix_table_bucket(model.vocab_size,
                                                         bucket=env.rank, num_buckets=env.world_size))
     dist.all_reduce(model.prefix_table, op=dist.ReduceOp.MAX)
     sampler.set_prefix_table(model.prefix_table.cpu().numpy())
     model.train()
+    if graphs_enabled():
+        runner, optimizer_graphs, gathers = capture_all(
+            model, manager, table, value_pull, sampler, schedule,
+            train_loader, prefetch_staging, run_steps, env.device,
+            gb10_step, print0, optimizer_graphs,
+        )
+    else:
+        # Calibration must finish BEFORE the time window and before
+        # any graph capture, even in eager mode.
+        prewarm_tiles_if_requested(manager.optimizer)
+        runner = EagerStepRunner(model, manager.optimizer, table, value_pull)
+        gathers = DeferredGathers(value_pull, NoFp8Refresh())
     batches = ScheduledBatches(train_loader(), schedule, steps=range(run_steps))
     prefetch = RowPrefetch(table, value_pull, batches, range(run_steps),
                            is_update_step, prefetch_staging)
