@@ -156,10 +156,22 @@ def check_compiled_attention(capture=False):
 
 
 def check_bf16_mlp():
-    from track_1_short.model.gpt import GPT
+    from track_1_short.model.gpt import ACTIVE_MLP_BACKEND, GPT
+    from track_1_short.perf.kernels.mlp import ACTIVE_FP8_MLP_IMPL
     x = torch.randn((128, 768), device="cuda", dtype=torch.bfloat16, requires_grad=True)
     w1, w2 = [(torch.randn((2816, 768), device="cuda", dtype=torch.bfloat16) * 0.01).requires_grad_()
               for _ in range(2)]
+    if ACTIVE_MLP_BACKEND == "fp8" and ACTIVE_FP8_MLP_IMPL == "hopper":
+        # The original autograd op's no-FP8 signature is eval-only; its
+        # backward requires FP8 caches. Test that contract instead of invoking
+        # a nonexistent BF16 backward. --check-fp8-mlp checks training gradients.
+        with torch.no_grad():
+            y = GPT._mlp(None, x, w1, w2, None)
+            reference = F.relu(x.float() @ w1.float().T).square() @ w2.float()
+        from gb10_training_probe import relative_error
+        relative_error(y, reference, 0.02)
+        print("[ok] TMA BF16 eval-only MLP vs FP32 reference: output L2 < 0.02; training uses FP8 backward")
+        return
     y = GPT._mlp(None, x, w1, w2, None)
     grads = torch.autograd.grad(y.float().square().mean(), (x, w1, w2))
     rx, rw1, rw2 = [t.detach().float().requires_grad_() for t in (x, w1, w2)]
@@ -205,6 +217,8 @@ def check_ngram_embedding():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--attention-only", action="store_true")
+    parser.add_argument("--eval-mlp-only", action="store_true",
+                        help="regression check for compiled validation MLP; run with GB10_MLP_BACKEND=fp8")
     parser.add_argument("--check-fp8-mlp", action="store_true",
                         help="probe selected FP8 MLP: legacy Hopper TMA or new SM121 backend")
     parser.add_argument("--benchmark-sm121-fp8-mlp", action="store_true",
@@ -218,6 +232,10 @@ def main():
     args = parser.parse_args()
     require_gb10()
     torch.manual_seed(123)
+    from gb10_training_probe import check_compiled_eval_mlp
+    if args.eval_mlp_only:
+        check_compiled_eval_mlp()
+        return
     check_attention()
     if not args.skip_compiled_attention:
         check_compiled_attention(capture=args.capture_attention)
@@ -225,6 +243,7 @@ def main():
         check_triton()
         check_fp8_matmul()
         check_bf16_mlp()
+        check_compiled_eval_mlp()
         check_ngram_embedding()
         from gb10_training_probe import check_ce, check_sparse_update, check_bf16_refresh, check_packed_qkv, check_anvil, check_ce_mtp_boundaries
         check_packed_qkv()
@@ -244,17 +263,17 @@ def main():
             if args.benchmark_sm121_fp8_mlp:
                 bench(8192, 8)
         elif gb10_mlp_backend() == "fp8":
-            from track_1_short.perf.kernels.mlp import ACTIVE_FP8_MLP_IMPL, prime_stage_cache
+            from track_1_short.perf.kernels.mlp import ACTIVE_FP8_MLP_IMPL
             if ACTIVE_FP8_MLP_IMPL == "sm121":
                 from gb10_fp8_mlp_bench import correctness, benchmark
                 correctness()  # checks actual fused forward/backward, not just priming
                 if args.benchmark_sm121_fp8_mlp:
                     benchmark(8192)
-            elif args.check_fp8_mlp:
-                prime_stage_cache()
-                print("[ok] explicit original Hopper FP8 TMA kernel priming")
             else:
-                raise ValueError("SM121 MLP benchmark does not support the Hopper implementation")
+                from gb10_tma_mlp_probe import run_checks, benchmark
+                run_checks()
+                if args.benchmark_sm121_fp8_mlp:
+                    benchmark(8192, 12)
         else:
             raise ValueError("Select GB10_MLP_BACKEND=fp8 or fp8_sm121 for FP8 MLP checks")
     if args.benchmark_refresh:

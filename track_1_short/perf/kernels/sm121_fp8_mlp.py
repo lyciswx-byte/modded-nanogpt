@@ -78,9 +78,9 @@ def _fp8_relu_square_sm121(
     for ki in range(tl.cdiv(K, BK)):
         kk = ki * BK + rk
         aa = tl.load(a_ptr + rm[:, None] * K + kk[None, :],
-                     (rm[:, None] < M) & (kk[None, :] < K), other=0)
+                     (rm[:, None] < M) & (kk[None, :] < K), other=0.0)
         bb = tl.load(b_ptr + rn[:, None] * K + kk[None, :],
-                     (rn[:, None] < N) & (kk[None, :] < K), other=0)
+                     (rn[:, None] < N) & (kk[None, :] < K), other=0.0)
         acc = tl.dot(aa, tl.trans(bb), acc)
     acc = acc * tl.load(dequant_ptr)
     mask = (rm[:, None] < M) & (rn[None, :] < N)
@@ -98,7 +98,7 @@ def _fp8_relu_square_sm121(
         # Match its delayed scale and BF16 dpre rounding, as for the Hopper
         # kernel: dpre = 2 * (dout @ W2) * sqrt(post).
         post_fp8 = tl.load(aux_ptr + rm[:, None] * N + rn[None, :],
-                           mask, other=0).to(tl.float32)
+                           mask, other=0.0).to(tl.float32)
         post_scale = tl.load(post_scale_ptr)
         dpre = (2.0 * acc * tl.sqrt(post_fp8 * post_scale)).to(tl.bfloat16)
         dpre_float = dpre.to(tl.float32)

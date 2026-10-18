@@ -31,11 +31,13 @@ from track_1_short.perf.kernels.sm121_fp8_mlp import fused_activation
 
 # The original Hopper TMA path remains intact for H100. GB10 FP8 MLP is
 # opt-in (GB10_MLP_BACKEND=fp8), and uses pointer-based SM121 kernels by default.
+# GB10_FP8_MLP_IMPL=hopper selects the TMA kernel with smaller SM121 tiles.
 ACTIVE_FP8_MLP_IMPL = os.environ.get(
     "GB10_FP8_MLP_IMPL", "sm121" if gb10_target() else "hopper"
 ).lower()
 if ACTIVE_FP8_MLP_IMPL not in ("sm121", "hopper"):
     raise ValueError("GB10_FP8_MLP_IMPL must be sm121 or hopper")
+GB10_TARGET = gb10_target()
 
 # Weight scales lag a step (see quantize_mlp_weights_dual), so they keep 12% headroom.
 WEIGHT_SCALE_HEADROOM = 1.12
@@ -234,8 +236,9 @@ def quantize_mlp_weights_dual(bank: torch.Tensor, scales: torch.Tensor, partial_
 # -----------------------------------------------------------------------------
 # Launcher.
 #
-# num_stages per kernel variant. Emit variants start at 3 stages and step down if one exceeds
-# H100 shared memory. This is the one module-level mutable in the package, and it has to be:
+# num_stages per kernel variant. H100 emit variants start at 3 stages and step down if needed;
+# GB10 starts at 1 with smaller tiles, safe even before eager priming.
+# This is the one module-level mutable in the package, and it has to be:
 # linear_relu_square runs inside torch.compile's autograd-Function subgraph, which rejects any
 # Python-state mutation and cannot retry a failed launch. So the dict is read-only under compile
 # and written only by eager calls, i.e. by prime_stage_cache() before compiling.
@@ -266,6 +269,12 @@ def linear_relu_square(a, b, aux=None, a_f8=None, b_f8=None, dequant_scale_ptr=N
     BLOCK_SIZE_N = 256
     BLOCK_SIZE_K = 128 if use_fp8 else 64
     num_warps = 8
+    if GB10_TARGET:
+        # SM121 implements TMA, but the Hopper 128x256 accumulator/epilogue
+        # alone can require 128 KiB. Shrink the tile as well as the pipeline:
+        # lowering stages cannot make that original tile fit the 99 KiB limit.
+        BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K = 64, 128, 64
+        num_warps = 4
     # The transposed post only exists for the fp8 dW2, when the bf16 post is dead.
     assert emit_f8 or not emit_t
     assert not (emit_t and store_post_bf)
@@ -308,7 +317,8 @@ def linear_relu_square(a, b, aux=None, a_f8=None, b_f8=None, dequant_scale_ptr=N
 
     key = (FORWARD, use_fp8, emit_f8, emit_t, store_pre, store_post_bf,
            BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, num_warps)
-    num_stages = _lrs_stage_cache.get(key, 4 if (FORWARD and not (emit_f8 or emit_t)) else 3)
+    default_stages = 1 if GB10_TARGET else (4 if (FORWARD and not (emit_f8 or emit_t)) else 3)
+    num_stages = _lrs_stage_cache.get(key, default_stages)
     grid = (min(NUM_SMS, triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, BLOCK_SIZE_N)), )
 
     def launch(stages):
@@ -353,7 +363,7 @@ def prime_stage_cache():
         )
         return
     dev = torch.device("cuda")
-    M, N, K = (128, 256, 128)  # one (BLOCK_M, BLOCK_N) tile, one fp8 K-block
+    M, N, K = (64, 128, 128) if GB10_TARGET else (128, 256, 128)
     num_sms = torch.cuda.get_device_properties(dev).multi_processor_count
     zeros = lambda fmt, *shape: torch.zeros(*shape, device=dev, dtype=fmt)
     a, b = zeros(torch.bfloat16, M, K), zeros(torch.bfloat16, N, K)

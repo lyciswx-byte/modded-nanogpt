@@ -60,9 +60,9 @@ def fixture(tokens, dim, hidden, seed=1234, folded=True):
     return x, w1, w2, p, args
 
 
-def compare_one(tokens, dim, hidden, folded):
+def compare_one(tokens, dim, hidden, folded, mlp_function=SM121FP8MLPFunction):
     x, w1, w2, p, args = fixture(tokens, dim, hidden, folded=folded)
-    y = SM121FP8MLPFunction.apply(x, w1, w2, *args)
+    y = mlp_function.apply(x, w1, w2, *args)
     g = (torch.randn_like(y) * 0.05).contiguous()
     variables = (x, w1, w2) + ((p,) if folded else ())
     actual = torch.autograd.grad(y, variables, g)
@@ -102,10 +102,10 @@ def compare_one(tokens, dim, hidden, folded):
           "output, dx/dW1/dW2/dp, delayed amax")
 
 
-def check_compiled():
+def check_compiled(mlp_function=SM121FP8MLPFunction):
     x, w1, w2, p, args = fixture(128, 768, 2816)
     compiled = torch.compile(
-        lambda x, w1, w2: SM121FP8MLPFunction.apply(x, w1, w2, *args),
+        lambda x, w1, w2: mlp_function.apply(x, w1, w2, *args),
         fullgraph=True, dynamic=False)
     for _ in range(2):
         y = compiled(x, w1, w2)

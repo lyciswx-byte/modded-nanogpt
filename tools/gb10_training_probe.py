@@ -12,6 +12,33 @@ def relative_error(actual, expected, limit=0.15):
     assert error.item() < limit, f"relative L2 error {error.item():.6f} >= {limit}"
 
 
+def check_compiled_eval_mlp():
+    """Regression: GB10 fp8 training must not enter Hopper TMA in validation.
+
+    The old GPT._mlp(..., fp8_args=None) path for GB10_MLP_BACKEND=fp8
+    compiled linear_relu_square_kernel with 131072 bytes of shared memory,
+    exceeding SM121's 101376-byte limit even after disabling pipelining.
+    Run with that backend as well as bf16 and fp8_sm121.
+    """
+    from track_1_short.model.gpt import ACTIVE_MLP_BACKEND, GPT
+
+    @torch.compile(dynamic=False, fullgraph=True)
+    def evaluate(x, w1, w2):
+        return GPT._mlp(None, x, w1, w2, None)
+
+    w1, w2 = [torch.randn(2816, 768, device="cuda", dtype=torch.bfloat16) * 0.01
+              for _ in range(2)]
+    with torch.no_grad():
+        for rows in (128, 129, 8192):
+            x = torch.randn(rows, 768, device="cuda", dtype=torch.bfloat16) * 0.5
+            actual = evaluate(x, w1, w2)
+            reference = F.linear(F.relu(F.linear(x.float(), w1.float())).square(), w2.float().T)
+            torch.cuda.synchronize()
+            assert actual.shape == x.shape and actual.dtype == torch.bfloat16
+            relative_error(actual, reference, 0.03)
+            print(f"[ok] compiled eval MLP backend={ACTIVE_MLP_BACKEND} rows={rows}: FP32 reference L2 < 0.03")
+
+
 def check_ce():
     from track_1_short.perf.kernels.cross_entropy import (
         FusedSoftcappedCrossEntropy, _ce_logit_gemm, lm_head_inverse_scale, quantize_lm_head_dual,

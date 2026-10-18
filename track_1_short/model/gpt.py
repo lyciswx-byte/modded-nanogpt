@@ -7,10 +7,11 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 from track_1_short.model.attention import AttnArgs, CausalSelfAttention, Yarn
-from track_1_short.perf.gb10_config import gb10_mlp_backend
+from track_1_short.perf.gb10_config import gb10_mlp_backend, gb10_target
 
 # Read once before torch.compile: no os.environ access inside captured graphs.
 ACTIVE_MLP_BACKEND = gb10_mlp_backend()
+GB10_TARGET = gb10_target()
 from track_1_short.model.layers import CastedLinearT, next_multiple_of_n, norm
 from track_1_short.ngram_table import NGRAM_SIGN_POOL_ROWS
 from track_1_short.perf.kernels.cross_entropy import (
@@ -20,6 +21,7 @@ from track_1_short.perf.kernels.cross_entropy import (
 )
 from track_1_short.perf.kernels.fp8_attention_quant import PackedQKVFP8Cache
 from track_1_short.perf.kernels.mlp import (
+    ACTIVE_FP8_MLP_IMPL,
     FusedLinearReLUSquareFunction,
     quantize_dual_layout_fused,
     quantize_mlp_weights_dual,
@@ -502,8 +504,13 @@ class GPT(nn.Module):
 
     def _mlp(self, x_normed, c_fc, c_proj, fp8_args):
         """Switchable BF16 ATen MLP or original Triton TMA FP8 MLP."""
-        if ACTIVE_MLP_BACKEND == "bf16" or (ACTIVE_MLP_BACKEND == "fp8_sm121" and fp8_args is None):
-            # The SM121 eval path deliberately avoids Hopper TensorDescriptor/TMA.
+        if ACTIVE_MLP_BACKEND == "bf16" or (
+            fp8_args is None and (
+                (GB10_TARGET and ACTIVE_FP8_MLP_IMPL != "hopper") or ACTIVE_MLP_BACKEND == "fp8_sm121"
+            )
+        ):
+            # Default portable GB10 backends use ATen in eval. The explicitly
+            # selected Hopper/TMA implementation has its own SM121-safe tiles.
             return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
         if ACTIVE_MLP_BACKEND == "fp8_sm121":
             return SM121FP8MLPFunction.apply(x_normed, c_fc, c_proj, *fp8_args)
