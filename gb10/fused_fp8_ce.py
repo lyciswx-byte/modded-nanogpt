@@ -87,7 +87,7 @@ def _backward(X,Scale,Logz,Targets,Prefix,Weights,PrefixWeight,G,Out,
     pref=tl.load(Prefix+row)
     pref_w=tl.load(PrefixWeight)
     weight_sum+=tl.where(pref>=0,pref_w,0.)
-    correction+=tl.where(pref>=0 & (off==pref),pref_w,0.)
+    correction+=tl.where((pref>=0) & (off==pref),pref_w,0.)
     prob=tl.exp(z-norm)
     dz=(23.0/7.5)*p*(1.0-p)
     upstream=tl.load(G+r)
@@ -102,6 +102,8 @@ class _FusedFP8CE(torch.autograd.Function):
         assert logits.is_contiguous()
         rows,vocab=logits.shape
         assert mtp_weights.numel() in (1,2,3)
+        assert 0 <= start < total and start + rows <= total
+        assert prefix_positions.numel() == targets.numel() == total
         assert targets.dtype==prefix_positions.dtype==torch.int64
         q,s=quantize_e4m3(logits)
         BK=1024
