@@ -225,8 +225,8 @@ class CausalSelfAttention(nn.Module):
 
         # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
         if GB10_NATIVE:
-            from gb10.attention import segmented_sdpa
-            y = segmented_sdpa(q[0], k[0], v[0], seqlens, bm_size, yarn.attn_scale)
+            from gb10.fa4 import dispatch
+            y = dispatch(q[0], k[0], v[0], seqlens, bm_size, yarn.attn_scale)
         else:
             y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
                                                             max_seqlen_q=max_len, max_seqlen_k=max_len,
