@@ -4,5 +4,5 @@ numpy
 tiktoken
 datasets
 huggingface-hub
-kernels
+# Hopper-only 'kernels' is not required by native GB10 attention.
 # torch + triton + CUDA runtime intentionally supplied by your validated container.
