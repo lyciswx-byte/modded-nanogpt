@@ -30,11 +30,28 @@ def check_runtime():
 def _mem_available_bytes():
     # /proc/meminfo reflects unified physical memory more usefully than only
     # torch.cuda.mem_get_info for the GB10 CPU/GPU coherent allocator.
+    system_available = None
     with open("/proc/meminfo", encoding="ascii") as f:
         for line in f:
             if line.startswith("MemAvailable:"):
-                return int(line.split()[1]) * 1024
-    raise RuntimeError("No MemAvailable value in /proc/meminfo")
+                system_available = int(line.split()[1]) * 1024
+                break
+    if system_available is None:
+        raise RuntimeError("No MemAvailable value in /proc/meminfo")
+    # Docker's memory.max can be lower than system RAM; use the stricter
+    # limit without mistaking the 128GB shared CPU/GPU pool for discrete VRAM.
+    limit_path = "/sys/fs/cgroup/memory.max"
+    used_path = "/sys/fs/cgroup/memory.current"
+    try:
+        with open(limit_path, encoding="ascii") as f:
+            raw = f.read().strip()
+        if raw != "max":
+            with open(used_path, encoding="ascii") as f:
+                used = int(f.read().strip())
+            system_available = min(system_available, max(0, int(raw) - used))
+    except (FileNotFoundError, PermissionError, ValueError):
+        pass
+    return system_available
 
 
 def memory_plan(device, max_step_tokens: int, val_step_tokens: int):
