@@ -8,6 +8,7 @@ autotune is allowed during a CUDA Graph capture: prewarm() must run first.
 Selected (shape, stride, dtype, kernel) -> tile is cached for graph replay.
 """
 from dataclasses import dataclass
+from gb10.policy import require_symmetric_tile
 import os
 
 import torch
@@ -45,8 +46,7 @@ def _key(kind, a):
 
 
 def _launch(kind, a, out, tile, *, alpha=1., beta=0.):
-    if tile.m != tile.n:
-        raise ValueError("symmetric kernel mirror stores require square M/N tiles")
+    require_symmetric_tile(tile.m, tile.n, tile.k)
     M, K = a.shape[-2:]
     side = M if kind == "xxt" else K
     if kind == "poly":
