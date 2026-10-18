@@ -115,7 +115,7 @@ FP8_ATTN_GRAD_SCALE = 1.0 / 448.0
 
 # Validation computes the loss over slabs of this many rows (record #360), so its [rows, vocab] fp32
 # logits (6.6 GB per slab) stay small next to the rank's 16 GB n-gram shard.
-EVAL_CE_SLAB_ROWS = 32768
+EVAL_CE_SLAB_ROWS = int(os.environ.get("GB10_EVAL_SLAB_ROWS", "1024")) if GB10_NATIVE else 32768
 
 # FP8 MLP scales (see perf/kernels/mlp.py), from record #360.
 FP8_MLP_X_SCALE = 2 ** -4      # static: post-RMS-norm rows have max|x| <= sqrt(768) = 27.7 < 448 * 2^-4
