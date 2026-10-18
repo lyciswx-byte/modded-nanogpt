@@ -5,6 +5,7 @@ captures one small forward/backward and replays after changing the boundary
 tensor WITHOUT recapturing: this detects the most dangerous stale-BOS bug.
 """
 import unittest
+from unittest.mock import patch
 import torch
 
 from gb10.graph_attention import graph_sdpa
@@ -22,17 +23,21 @@ class GraphAttentionReference(unittest.TestCase):
     def test_cpu_varlen_mask_and_grad(self):
         for qd, vd in ((64, 128), (64, 64), (128, 128)):
             q, k, v = self._inputs(n=33, qdim=qd, vdim=vd)
-            for ends in ((0, 4, 13, 33, 33), (0, 8, 17, 33, 33)):
+            for ends in ((0, 4, 13, 33, 33), (0, 8, 17, 33, 33),
+                         (0, 0, 4, 4, 13, 33, 33)):
                 off = torch.tensor(ends, dtype=torch.int32)
-                got = graph_sdpa(q, k, v, off, 8, .13)
                 ref = segmented_sdpa(q, k, v, off, 8, .13)
-                self.assertTrue(torch.allclose(got, ref, atol=2e-5, rtol=2e-5),
-                                f"({qd},{vd}) {ends}: {(got-ref).abs().max()}")
-                dg = torch.autograd.grad(got.sum(), (q, k, v), retain_graph=True)
-                dr = torch.autograd.grad(ref.sum(), (q, k, v), retain_graph=True)
-                for a, b in zip(dg, dr):
-                    self.assertTrue(torch.allclose(a, b, atol=2e-5, rtol=2e-5),
-                                    f"({qd},{vd}) {ends} backward {float((a-b).abs().max())}")
+                for mode in ("separate", "fused"):
+                    with self.subTest(qk=qd, value=vd, ends=ends, mode=mode), \
+                         patch.dict("os.environ", {"GB10_GRAPH_SEGMENT_LOOKUP": mode}):
+                        got = graph_sdpa(q, k, v, off, 8, .13)
+                        self.assertTrue(torch.allclose(got, ref, atol=2e-5, rtol=2e-5),
+                                        f"({qd},{vd}) {ends}: {(got-ref).abs().max()}")
+                        dg = torch.autograd.grad(got.sum(), (q, k, v), retain_graph=True)
+                        dr = torch.autograd.grad(ref.sum(), (q, k, v), retain_graph=True)
+                        for a, b in zip(dg, dr):
+                            self.assertTrue(torch.allclose(a, b, atol=2e-5, rtol=2e-5),
+                                            f"({qd},{vd}) {ends} backward {float((a-b).abs().max())}")
 
     @unittest.skipUnless(torch.cuda.is_available(), "requires a CUDA GPU")
     def test_cuda_graph_replay_reads_live_cu_seqlens(self):
