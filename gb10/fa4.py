@@ -52,11 +52,12 @@ def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
     # The loader emits padded terminal endpoints. FA4 requires strictly
     # increasing offsets, so remove trailing duplicates on the CPU.
     cpu = cum_seqlens.cpu() if cum_seqlens.device.type != "cpu" else cum_seqlens
-    ends = cpu.tolist()
-    valid = 1
-    while valid < len(ends) and ends[valid] > ends[valid-1]:
-        valid += 1
-    ends = ends[:valid]
+    # The validation loader may also begin with duplicate zero offsets
+    # when the first token is BOS, not only trailing padding at T.
+    ends = []
+    for endpoint in cpu.tolist():
+        if not ends or endpoint > ends[-1]:
+            ends.append(endpoint)
     assert ends[0] == 0 and ends[-1] == q.shape[0], (ends[-1], q.shape[0])
     max_seqlen = max(b - a for a, b in zip(ends, ends[1:]))
     cu = torch.tensor(ends, dtype=torch.int32, device=q.device)
