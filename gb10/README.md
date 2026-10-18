@@ -23,7 +23,7 @@ historical PR #360. Original 8×H100 remains available in the master branch.
 The GB10 SDPA dispatches through the installed PyTorch/cuDNN; this is not yet a benchmark
 claim that SDPA beats all available sm_121 FlashAttention/FlexAttention implementations.
 It avoids the common fatal error of loading the pinned sm_90 FA3 library on sm_121.
-The reference implementation iterates document boundaries on **CPU pinned** metadata,
+The reference implementation iterates document boundaries on **CPU-resident** metadata,
 NOT by copying the packed `cu_seqlens` tensor from GPU seven times per step.
 
 The native loss preserves the MTP, prefix CE, sampled candidate mapping and logit softcap;
