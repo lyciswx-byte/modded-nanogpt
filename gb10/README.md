@@ -282,3 +282,91 @@ NaN-free 8/128/full-step smokes on both nodes; sampled/full CE target
 mapping parity; measured per-stage latency, peak unified memory,
 NCCL throughput; and final validation vs the BF16 baseline across
 multiple seeds. Until then, BF16 SDPA is the default.
+
+## Two-node CUDA graph capture and SM121 Triton Tile calibration (October 2026)
+
+Additional source:
+- `gb10/tile_tuner.py`: ANVIL's symmetric `XXT`, `XTX`, `b*A+c*A@A`
+  kernels now have an **on-device** Tile search over 32/64/128 M/N,
+  K=32/64, 4/8 warps, 2/3 pipeline stages. It compiles and verifies
+  output against ATen before selecting the quickest valid GB10 configuration.
+  A configuration is cached per kernel, matrix shape, stride and dtype,
+  and cannot retune in a CUDA graph.
+- `gb10/triton_tiles.py`: independently measures 256/512/1024/2048
+  element Triton Tile sizes for FP8 E4M3 quantization and CE softcap
+  reduction; numeric rejection precedes latency choice. Frozen for a
+  worker BEFORE capturing the first step.
+- `gb10/graph_attention.py`: a **graph-safe** variable-length attention
+  implementation. In contrast to FA4/CPU-segmented SDPA it does not
+  read document boundaries on the host. GPU searchsorted finds the
+  document ID of each query/key during every replay, so different
+  batches with the same shapes can change BOS positions safely. It
+  only gathers a query tile's causal key window (not a giant T×T mask).
+  This is a native SDPA implementation, not an SM100/SM90 FlashAttention
+  binary nor a claim to be faster than the external SM121 FA4.
+- `gb10/capture.py`: uses the proven shape-key protocol from
+  `track_1_short/perf/cuda_graphs/`: captures and self-checks every
+  unique **forward and backward** graph, plus the **three ANVIL
+  matrix-bank optimizer** graphs. The FP8 input/weight quantization and
+  fused FP8 CE forward/backward are inside the step graphs, so **no
+  separate H100-style FP8 refresh graph is needed**. After a warmup
+  the model, optimizer and sparse table are reset; graph pointers and
+  optimizer-bank aliases are verified; a missing step graph then
+  becomes an error, never a timed-region fallback.
+- `gb10/test_graph_attention.py` and `gb10/test_tiles.py`: CPU
+  numerical parity with eager segment-local attention, and real-SM121
+  CUDA graph replay with changing document boundaries/Gram inputs.
+
+**What is NOT captured:** the CPU data loader, candidate construction
+and uploads, the CPU shard metadata, dynamic n-gram/Value Embedding
+all-to-all / row-prefetch, 2-node NCCL ReduceScatter/AllGather/AllReduce,
+sharded/replicated Adam updates, tail-shipping and validation. These
+have dynamic host/collective lifetimes; capturing the entire distributed
+training step including NCCL requires a separate, topology-specific
+correctness and graph registration study. The new feature therefore
+means *all differentiable training compute + ANVIL banks captured*, not
+a single graph containing every distributed operation.
+
+### Run the GB10 Tile tuner and compute graphs
+
+Use the same flags on both nodes. Inside each existing NVIDIA GB10 Docker
+(with sm121-compatible PyTorch, NCCL, Triton and the FineWeb data mounted):
+
+```bash
+git fetch origin && git checkout 2xGB10
+python -m unittest gb10.test_graph_attention -v
+python -m unittest gb10.test_tiles -v
+
+export GB10_GRAM_BACKEND=triton
+export GB10_TUNE_TRITON_TILES=1
+export GB10_CUDA_GRAPHS=1
+export GB10_ATTN_BACKEND=graph
+
+# Optional FP8 projection and fused CE (each separately parity-tested):
+export GB10_FP8_LINEAR=1
+export GB10_FUSED_FP8_CE=1
+
+# Keep the first run short; graph capture still warms all required keys.
+export GB10_SMOKE_STEPS=8
+export MASTER_ADDR="<RANK0_IP_ON_FAST_FABRIC>"
+export NODE_RANK=0 # 1 on second GB10
+bash gb10/run_two_nodes.sh
+```
+
+No FA4 host-varlen/hybrid option may be combined with `GB10_CUDA_GRAPHS=1`.
+That path computes CPU sequence offsets at dispatch time and freezing it
+in a graph would silently attend across the wrong documents.
+Choose `GB10_ATTN_BACKEND=fa4` or `hybrid` with graphs OFF, and
+`GB10_ATTN_BACKEND=graph` with graphs ON until a graph-safe FA4
+adapter has passed live-offset replay tests.
+
+Tile calibration, per-configuration graph capture, self-check, and
+post-warmup reset are outside training wall time. Real end-to-end cold
+startup **does** include their costs, and no speedup is claimed here.
+The graph capture can increase the unified-memory pool substantially:
+`GB10_GRAPH_MAX_RESERVED_GIB=96` and
+`GB10_GRAPH_MIN_HOST_AVAILABLE_GIB=8` are fail-closed guards.
+`GB10_GRAPH_QUERY_TILE=128` (64,128,256 supported) and
+`GB10_GRAPH_TILES_PER_GROUP=4` (1..16) control graph attention.
+These are initial safety defaults, not measured optimal GB10 values.
+The hardware test suite must run on BOTH nodes prior to claiming correctness.
