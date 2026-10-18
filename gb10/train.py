@@ -18,6 +18,7 @@ import torch.distributed as dist
 from gb10.eager import EagerStepRunner, NoFp8Refresh
 from gb10.capture import enabled as graphs_enabled, check_graph_configuration, graph_owners, capture_all, prewarm_tiles_if_requested
 from gb10.preflight import check_runtime, memory_plan
+from gb10.policy import validation_windows
 from gb10.selftest import run_selected_tests
 from track_1_short.canonical_mask import BackgroundCanonicalMask
 from track_1_short.config import (
@@ -196,8 +197,8 @@ def main():
             raise ValueError("GB10_VAL_PULL_WINDOW must be in [1,8]")
         viter = val_loader()
         with torch.no_grad():
-            for offset in range(0, val_steps, window):
-                group = [next(viter) for _ in range(min(window, val_steps-offset))]
+            for indices in validation_windows(val_steps, window):
+                group = [next(viter) for _ in indices]
                 pulls = table.eval_pulls([batch.ngram_ids for batch in group])
                 for batch, pull in zip(group, pulls):
                     table.land(pull)
