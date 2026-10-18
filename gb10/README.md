@@ -370,3 +370,18 @@ The graph capture can increase the unified-memory pool substantially:
 `GB10_GRAPH_TILES_PER_GROUP=4` (1..16) control graph attention.
 These are initial safety defaults, not measured optimal GB10 values.
 The hardware test suite must run on BOTH nodes prior to claiming correctness.
+
+### Compare graph replay against eager on the actual GB10
+
+```bash
+GB10_GRAPH_QUERY_TILE=64 python -m gb10.bench_graph --tokens 1024 --qk 64 --v 128
+GB10_GRAPH_QUERY_TILE=128 python -m gb10.bench_graph --tokens 1024 --qk 64 --v 128
+GB10_GRAPH_QUERY_TILE=256 python -m gb10.bench_graph --tokens 1024 --qk 64 --v 128
+python -m gb10.bench_graph --tokens 2048 --qk 128 --v 128 --window 896
+```
+
+The measured output includes both **forward and backward**, median eager
+and graph replay time, graph-pool reserved GiB and gradient parity after
+changing the live document offsets. A small isolated attention benchmark
+is not proof of an end-to-end two-machine speedup. Record settings and
+driver/PyTorch versions with each result.
