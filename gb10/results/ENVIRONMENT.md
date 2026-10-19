@@ -3,8 +3,8 @@
 Status: **PARTIAL** on 2026-10-18 (America/Goose_Bay).
 
 The repository checkout is commit `ff98b809e3d8114f690292363d89659fa20a0620`
-on branch `codex/reexecute-ff98`. One local GB10 is available
-through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
+on branch `codex/reexecute-ff98` for the initial probe. Both GB10 hosts
+were later tested using `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 
 | Field | Node 0 | Node 1 |
 |---|---|---|
@@ -15,7 +15,8 @@ through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 | ConnectX-7 interface / transport | `enp1s0f1np1`; HCA `rocep1s0f1,roceP2p1s0f1`; initial Socket, later verified `NET/IB` | `enp1s0f1np1`; same HCA pair; initial Socket, later verified `NET/IB` |
 
 `nvidia-smi`, the CUDA/PyTorch capability probe, and the two-node launch passed
-in the container. NCCL used Socket rather than RDMA on the selected interface.
+in the container. The initial two-node probe used Socket; the later RoCE-enabled run
+confirmed NCCL `NET/IB` on both hosts.
 
 The follow-up code checks whether the new CUTLASS DSL exports the moved
 annotation classes at `cutlass.cute`, and makes those **same class objects**
