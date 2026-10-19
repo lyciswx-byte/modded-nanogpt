@@ -397,9 +397,10 @@ than retaining ~160 GPU batches; FP8 CE calibration selects a separate
 vocabulary widths; and graph mode defaults to PyTorch's native allocator
 unless the container already provides `PYTORCH_ALLOC_CONF`.
 
-These are **code-level corrections**. Only CI CPU/reference checks have been
-run; an actual 2×GB10 end-to-end smoke, numerical FP8 graph backward and
-full FineWeb validation remain hardware acceptance blockers. Do not report
+These are **code-level corrections**. Subsequently, a two-host BF16 eager
+8-step smoke and RoCE `NET/IB` transport have been verified, but numerical
+FP8 graph backward, FA4 after the CUTLASS fix, and full FineWeb validation
+remain hardware acceptance blockers. Do not report
 this branch as measured-faster or record-equivalent until those tests pass.
 
 ## Latest follow-on work and Codex handoff
