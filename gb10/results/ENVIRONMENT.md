@@ -12,7 +12,7 @@ through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 | Driver / CUDA runtime | 580.178.04 / CUDA 13.4 | 580.178.04 / CUDA 13.4 |
 | PyTorch / Triton / NCCL | 2.14.0a0+b2c75dd / 3.8.0 / 2.31.2 | 2.14.0a0+b2c75dd / 3.8.0 / 2.31.2 |
 | FA4 / CuTe | Local bundle import failed (`ThrMma` moved); compatibility shim implemented, hardware re-test pending | hardware re-test pending |
-| ConnectX-7 interface / transport | `enp1s0f1np1` 192.168.100.10; NCCL used Socket | `enp1s0f1np1` 192.168.100.11; NCCL used Socket |
+| ConnectX-7 interface / transport | `enp1s0f1np1`; HCA `rocep1s0f1,roceP2p1s0f1`; initial Socket, later verified `NET/IB` | `enp1s0f1np1`; same HCA pair; initial Socket, later verified `NET/IB` |
 
 `nvidia-smi`, the CUDA/PyTorch capability probe, and the two-node launch passed
 in the container. NCCL used Socket rather than RDMA on the selected interface.
@@ -26,3 +26,10 @@ The current branch has no post-fix FA4 GPU result.
 the logged `NET/Socket` is **not** an RDMA result. Query
 `gb10.fabric.report_fabric()`, host `ibv_devinfo` and NCCL
 `NCCL_DEBUG=INFO` from both containers before changing communication flags.
+
+A later Codex rerun on both hosts provided real RoCE evidence:
+`NCCL_NET=IB`, `NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1`,
+exposed `/dev/infiniband` and unlimited `memlock`, with NCCL logs
+showing `NET/IB/0` and `NET/IB/1`. The earlier `NET/Socket` is
+historical, not the latest reported transport. Other GB10 installations
+may use different interface/HCA names.
