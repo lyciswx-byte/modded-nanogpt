@@ -155,3 +155,11 @@ Both nodes used `modded-nanogpt:92-gb10` at the rebased `2xGB10` checkout. PyTor
 | FAIL (input) | `GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` | Both ranks reached preflight, then failed at first batch: `FileNotFoundError: ./data/fineweb10B/fineweb_train_*.bin` |
 
 The containers expose no `/dev/infiniband`; the NCCL probe therefore used Socket transport over the ConnectX interface, not verified RDMA/RoCE.
+
+## Latest data-mounted smoke (2026-10-19 UTC)
+
+Using `/home/lycis/Desktop/modded-nanogpt/data/fineweb10B` read-only on both
+hosts, `GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` completed **PASS** on
+both ranks. Rank 0 reported `step=8/8`, global tokens `65,536`, elapsed
+`12.88s`, allocated `19.39GiB`; rank 1 reached the same final step. This is a
+Socket-only smoke and intentionally performs no final validation or tail ship.

@@ -96,3 +96,10 @@ will log their actual effective divisor and cumulative tokens.
 - Two-node NCCL `all_reduce`: **PASS**, result `3.0` on both ranks; no throughput number claimed.
 - Eight-step training smoke: **BLOCKED** before step 1 because FineWeb binary shards were absent on both mounted checkouts.
 - FA4 forward/backward: **BLOCKED** by Hugging Face HTTP 401; no latency or throughput number claimed.
+
+## Data-mounted 8-step smoke (2026-10-19 UTC)
+
+With FineWeb shards mounted read-only on both nodes, rank 0 completed 8/8 in
+`12.88s`, `65,536` global tokens, and `19.39GiB` allocated. This is a measured
+short smoke only; it is not comparable to the historical record and has no
+validation CE.
