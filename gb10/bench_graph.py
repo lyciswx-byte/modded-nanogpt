@@ -68,6 +68,7 @@ def main():
     replay_p50,replay_mean=time_cuda(graph.replay,args.iterations)
     print(f"[GB10 graph] tokens={n} (qk,v)=({args.qk},{args.v}) window={args.window} "
           f"query_tile={__import__('os').environ.get('GB10_GRAPH_QUERY_TILE','128')} "
+          f"segment_lookup={__import__('os').environ.get('GB10_GRAPH_SEGMENT_LOOKUP','separate')} "
           f"eager_p50_ms={eager_p50:.3f} graph_p50_ms={replay_p50:.3f} "
           f"eager_avg_ms={eager_mean:.3f} graph_avg_ms={replay_mean:.3f} "
           f"speedup={eager_p50/max(replay_p50,1e-9):.2f}x "
