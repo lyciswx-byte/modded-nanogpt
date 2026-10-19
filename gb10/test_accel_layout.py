@@ -101,6 +101,7 @@ class FA4MixedCPU(unittest.TestCase):
             raise ValueError("CuTe package import failed")
         load_fa4.cache_clear()
         with patch.object(torch.cuda, "get_device_capability", return_value=(12, 1)), \
+             patch("gb10.fa4.install_legacy_cute_annotations", return_value=()), \
              patch.dict(sys.modules, {"kernels": types.SimpleNamespace(get_kernel=broken_kernel)}):
             with self.assertRaisesRegex(RuntimeError, "FA4 bundle could not be loaded") as cm:
                 load_fa4()
