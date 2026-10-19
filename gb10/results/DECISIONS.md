@@ -5,9 +5,9 @@
   unmeasured SM121 kernel is enabled by default.
 - Recorded the portable compile and policy/import results separately from the
   blocked torch and hardware suite.
-- Hardware acceptance is deferred until both existing ARM64 CUDA containers
-  provide SM121 capability, versions, NCCL transport, and reproducible two-rank
-  logs.
+- Two real ARM64 SM121 containers and a successful two-rank 8-step BF16 eager
+  smoke have now been reported. Full training, FA4 and graph/FP8 convergence
+  remain unverified. NCCL used Socket rather than proven RDMA.
 - Do not enable FA4 by default: the local GB10 run is blocked by Hugging Face
   authentication while loading the third-party bundle. Keep FP8 linear opt-in
   pending two-node convergence evidence.
@@ -26,3 +26,14 @@
   on the same GB10 container. No silent SDPA fallback when `fa4` is selected.
 - The supplied local bundle was tested and the exact dependency mismatch is
   now recorded: the installed CuTe/CUTLASS lacks `cutlass.cute.core.ThrMma`.
+
+- Apply a strictly scoped compatibility mapping from legacy
+  `cutlass.cute.core.ThrMma` to NVIDIA's real `cutlass.cute.ThrMma`
+  and related moved types when FA4 is opted in, rather than fabricating
+  a kernel or replacing the entire CUDA stack. Re-test the original
+  package; a further CuTe JIT failure must remain fatal.
+- Correct 8-step reported token budget to the *stage-0 batch*, not
+  maximum per-rank tokens from stage 3; log actual planned/completed
+  global tokens during training.
+- Surface container RDMA visibility separately from NCCL transport:
+  do not claim that Socket on a ConnectX interface is RoCE.
