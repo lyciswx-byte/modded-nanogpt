@@ -90,3 +90,9 @@ The later feedback repeated the previous **196,608 token estimate**,
 but it still uses the wrong maximum-stage batch figure. Under the source
 defaults the first eight steps have 65,536 global tokens; future runs
 will log their actual effective divisor and cumulative tokens.
+
+## Current 2026-10-19 probes
+
+- Two-node NCCL `all_reduce`: **PASS**, result `3.0` on both ranks; no throughput number claimed.
+- Eight-step training smoke: **BLOCKED** before step 1 because FineWeb binary shards were absent on both mounted checkouts.
+- FA4 forward/backward: **BLOCKED** by Hugging Face HTTP 401; no latency or throughput number claimed.

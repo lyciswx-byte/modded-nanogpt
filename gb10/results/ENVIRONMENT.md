@@ -44,3 +44,7 @@ exposed `/dev/infiniband` and unlimited `memlock`, with NCCL logs
 showing `NET/IB/0` and `NET/IB/1`. The earlier `NET/Socket` is
 historical, not the latest reported transport. Other GB10 installations
 may use different interface/HCA names.
+
+## Current container probe (2026-10-19)
+
+`gb10-1` (`192.168.100.10`) and `gb10-2` (`192.168.100.11`) both ran `modded-nanogpt:92-gb10`. The container reported PyTorch `2.14.0a0+b2c75dd062.nv26.09`, CUDA `13.4`, Triton `3.8.0`, NCCL `2.31.2`, and GB10 capability `(12, 1)`. `/dev/infiniband` was absent in both containers, so this run was Socket-only.

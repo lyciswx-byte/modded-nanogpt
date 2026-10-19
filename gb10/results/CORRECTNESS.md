@@ -142,3 +142,16 @@ Rank0 elapsed was reported as 12.69s; this is **not** a final benchmark.
 measured ports rather than hardcoding those HCAs for all installations.
 `GB10_REQUIRE_RDMA_DEVICE=1` checks device visibility, NOT measured
 bandwidth. A full 1194-step training/validation run is still missing.
+
+## Latest two-node container run (2026-10-19 UTC)
+
+Both nodes used `modded-nanogpt:92-gb10` at the rebased `2xGB10` checkout. PyTorch `2.14.0a0+b2c75dd062.nv26.09`, CUDA `13.4`, Triton `3.8.0`, NCCL `2.31.2`, and SM121 were reported on both nodes.
+
+| Result | Exact test | Observation |
+|---|---|---|
+| PASS | Two-node `torchrun` NCCL `all_reduce`, `NCCL_SOCKET_IFNAME=enp1s0f1np1` | Both ranks returned `3.0` (`gb10-1`, `gb10-2`) |
+| PASS | Full unittest discovery in each container | 36 tests passed on each node |
+| BLOCKED | FA4 forward/backward test | Hugging Face HTTP 401 resolving `SecondNatureComputing/flash-attn-4-sm120` |
+| FAIL (input) | `GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` | Both ranks reached preflight, then failed at first batch: `FileNotFoundError: ./data/fineweb10B/fineweb_train_*.bin` |
+
+The containers expose no `/dev/infiniband`; the NCCL probe therefore used Socket transport over the ConnectX interface, not verified RDMA/RoCE.
