@@ -27,7 +27,31 @@ def load_fa4():
     # Third-party CuTe DSL annotations may still reference the pre-4.6
     # cute.core namespace. Alias only classes that are present in NVIDIA's
     # supported top-level cute API. No JIT code or kernels are rewritten.
-    aliased = install_legacy_cute_annotations()
+    aliased = list(install_legacy_cute_annotations())
+    # CuTe 4.8 renamed the old fragment constructor used by the SM120 bundle.
+    # The old call creates register-memory storage, so this alias preserves
+    # semantics while keeping the compatibility change scoped to opt-in FA4.
+    try:
+        import cutlass.cute as cute
+        if not hasattr(cute, "make_fragment") and hasattr(cute, "make_rmem_tensor"):
+            cute.make_fragment = cute.make_rmem_tensor
+            aliased.append("make_fragment=make_rmem_tensor")
+        # CUTLASS 4.8 renamed the NVVM atomic result keyword from `res` to
+        # `results`; the supplied FA4 bundle still uses the former spelling.
+        from cutlass._mlir.dialects import nvvm
+        atomicrmw = nvvm.atomicrmw
+        if not getattr(atomicrmw, "_gb10_compat", False):
+            def atomicrmw_compat(*args, **kwargs):
+                if "res" in kwargs and "results" not in kwargs:
+                    kwargs["results"] = kwargs.pop("res")
+                if "results" in kwargs and not isinstance(kwargs["results"], (tuple, list)):
+                    kwargs["results"] = [kwargs["results"]]
+                return atomicrmw(*args, **kwargs)
+            atomicrmw_compat._gb10_compat = True
+            nvvm.atomicrmw = atomicrmw_compat
+            aliased.append("nvvm.atomicrmw(res=results)")
+    except ImportError:
+        pass
     if aliased:
         print(f"[GB10 FA4] CUTLASS {cutlass_version()}: "
               f"compatibility annotations {', '.join(aliased)}", flush=True)
@@ -137,12 +161,24 @@ def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
     cu = torch.tensor(ends, dtype=torch.int32, device=q.device)
     fn = load_fa4()
     q_compatible, k_compatible, v_compatible = pad_mixed_qkv_for_fa4(q, k, v)
+    # Recent CuTe FA4 bundles annotate the JIT window arguments as Int32.
+    # Python ints work with older bundles but fail during SM121 compilation.
+    # Keep the conversion local to the optional backend so the eager/graph
+    # paths do not acquire a CUTLASS dependency.
+    try:
+        from cutlass.base_dsl.typing import Int32
+        fa4_window = (Int32(int(left_window)), Int32(0))
+    except (ImportError, TypeError, ValueError):
+        fa4_window = (int(left_window), 0)
     try:
         y = fn(q_compatible.contiguous(), k_compatible.contiguous(), v_compatible.contiguous(),
            cu_seqlens_q=cu, cu_seqlens_k=cu,
            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-               causal=True, softmax_scale=float(scale),
-               window_size=(int(left_window), 0))
+               # Encode causal masking as a local window with right=0. Newer
+               # bundles otherwise normalize causal=True back to Python int 0
+               # before the CuTe JIT sees the argument.
+               causal=False, softmax_scale=float(scale),
+               window_size=fa4_window)
     except Exception as exc:
         raise RuntimeError(
             f"FA4 SM121 execution failed for QK={q.shape[-1]}, V={v.shape[-1]}, "

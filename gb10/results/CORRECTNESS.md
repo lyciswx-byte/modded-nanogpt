@@ -177,3 +177,14 @@ JIT failed identically on each:
 The error originates in the bundle's `build/torch-cuda/interface.py` during
 `cute.compile`; `gb10/fa4.py` preserves and reports the chained exception.
 FA4 remains **BLOCKED** and opt-in. No FA4 performance number was recorded.
+
+## FA4 compatibility-layer attempt (2026-10-19 UTC)
+
+`gb10/fa4.py` now adapts the supplied bundle's CuTe 4.8 API differences:
+`window_size` uses typed `Int32`, old `cute.make_fragment` maps to
+`cute.make_rmem_tensor`, and `nvvm.atomicrmw(res=...)` maps to the current
+`results=` spelling. With the bundle's `interface.py` window arguments patched
+accordingly, forward and backward JIT compilation completed on node 0; the
+same path reached backward on node 1. The existing numerical gate then failed:
+`FA4 backward diff 1544.0` (test tolerance `atol=rtol=0.12`). FA4 remains
+fail-closed and opt-in; native SDPA remains the safe backend.
