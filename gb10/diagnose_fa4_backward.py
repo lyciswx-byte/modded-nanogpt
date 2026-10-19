@@ -68,11 +68,12 @@ def _real_fa4(q,k,v,ends,*,causal,window,scale):
     q,k,v = pad_mixed_qkv_for_fa4(q,k,v)
     offsets = torch.tensor(ends,device=q.device,dtype=torch.int32)
     max_len = max(b-a for a,b in zip(ends[:-1],ends[1:]))
+    from gb10.fa4_masks import fa4_mask_kwargs
     args = dict(
         cu_seqlens_q=offsets, cu_seqlens_k=offsets,
         max_seqlen_q=max_len, max_seqlen_k=max_len,
-        causal=causal, softmax_scale=scale,
-        window_size=(-1,-1) if window is None else (window,0 if causal else window),
+        softmax_scale=scale,
+        **fa4_mask_kwargs(causal=causal, window=window),
     )
     out=load_fa4()(q.contiguous(),k.contiguous(),v.contiguous(),**args)
     if isinstance(out,(tuple,list)):
