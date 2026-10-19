@@ -2,25 +2,42 @@
 
 ## Source/commit status
 
-The user's local Codex change `4044024` has been reported as:
-- `window_size` -> CuTe `Int32`
-- `cute.make_fragment` -> `cute.make_rmem_tensor`
-- `nvvm.atomicrmw(res=...)` -> `results=...`
+Commit [4044024](https://github.com/lyciswx-byte/modded-nanogpt/commit/4044024820702bb61b4dc22c1b345f9ab377c41a)
+has now been fetched and audited. It changes `gb10/fa4.py` only
+plus the correctness report:
+- `window_size` -> CuTe `Int32`;
+- `cute.make_fragment` -> `cute.make_rmem_tensor`;
+- `nvvm.atomicrmw(res=...)` -> `results=[...]`;
+- finite causal left-window forwarded as `causal=False` and `(left,0)`.
 
-It now reportedly JIT-compiles both directions but fails the old
-`test_fa4_varlen_mixed_heads_forward_backward` at **max gradient diff
-1544**. **This short commit is not currently reachable from the connected
-GitHub repository**. The current branch therefore does not contain, audit,
-or overwrite its source changes. Publish a branch/ref containing 4044024
-before modifying the corresponding external CuTe kernels.
+Both directions reportedly JIT-compile but the original
+`test_fa4_varlen_mixed_heads_forward_backward` still fails with
+**max gradient diff 1544**. The third-party bundle's actual backward
+kernel files are **not** part of 4044024.
+
+Review of current upstream `interface.py` shows that
+`causal=True, window=(left,0)` is canonicalized to the local mask
+`causal=False, window=(left,0)` whenever a finite left window is set.
+So the explicit causal flag change is NOT proof of a semantic bug by itself.
+
+The staged diagnostic now uses the same `gb10.fa4_masks.fa4_mask_kwargs`
+CuTe `Int32` window construction as the real FA4 adapter. Previously the
+diagnostic passed raw Python integers and a different causal flag, risking
+a spurious JIT failure or a different kernel specialization.
+
+The `nvvm.atomicrmw` wrapper performs a process-global monkeypatch
+when FA4 is loaded, so inspect its caller's result types/address space
+carefully. The official API's `results` parameter is a preallocated
+list, and the function returns the old value. A syntax-compatible alias
+does not guarantee the entire bundle's gradients are correct.
 
 Compilation is not gradient correctness. Do not increase tolerances, turn
 on FA4 in training, or silently fall back to an incompatible kernel.
 
 ## A. Isolate the first failing dimension / feature on the actual GB10
 
-Inside the existing CUDA 13.4 / PyTorch SM121 Docker container, with the
-locally patched bundle that includes 4044024 mounted:
+Inside the existing SM121 Docker container, with the exact locally patched
+third-party bundle present (4044024 by itself does not contain its sources):
 
 ```bash
 export GB10_PROFILE=1
@@ -97,9 +114,10 @@ with this debug bridge is prohibited.
 
 ## C. Required upstream/backend fix before native FA4 backward acceptance
 
-1. Obtain/publish the complete 4044024 diff **and full JSON diagnostic
-   output**. The isolated failure determines which exact `flash_bwd*`
-   kernel needs a patch.
+1. The full **4044024 wrapper diff is now available**; obtain the patched
+   third-party bundle's `flash_bwd*` and `interface.py` source revision
+   plus the full JSON diagnostic output. The isolated failure determines
+   which actual kernel needs a patch.
 2. Validate the bundle's specific CUTLASS DSL version against the
    matching Dao-AILab SM120 implementation. The bundle's public model
    card mainly certifies dense/varlen causal + noncausal, **not** the
