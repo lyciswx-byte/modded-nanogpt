@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 
 from gb10.cute_compat import install_legacy_cute_annotations, cutlass_version
+from gb10.fa4_masks import fa4_mask_kwargs
 
 
 FA4_MODEL = "SecondNatureComputing/flash-attn-4-sm120"
@@ -161,24 +162,14 @@ def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
     cu = torch.tensor(ends, dtype=torch.int32, device=q.device)
     fn = load_fa4()
     q_compatible, k_compatible, v_compatible = pad_mixed_qkv_for_fa4(q, k, v)
-    # Recent CuTe FA4 bundles annotate the JIT window arguments as Int32.
-    # Python ints work with older bundles but fail during SM121 compilation.
-    # Keep the conversion local to the optional backend so the eager/graph
-    # paths do not acquire a CUTLASS dependency.
-    try:
-        from cutlass.base_dsl.typing import Int32
-        fa4_window = (Int32(int(left_window)), Int32(0))
-    except (ImportError, TypeError, ValueError):
-        fa4_window = (int(left_window), 0)
+    # Use the exact same typed CuTe mask arguments as the isolated backward
+    # checker. A finite causal window canonicalizes to local (left, 0).
+    mask_kwargs = fa4_mask_kwargs(causal=True, window=int(left_window))
     try:
         y = fn(q_compatible.contiguous(), k_compatible.contiguous(), v_compatible.contiguous(),
            cu_seqlens_q=cu, cu_seqlens_k=cu,
            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-               # Encode causal masking as a local window with right=0. Newer
-               # bundles otherwise normalize causal=True back to Python int 0
-               # before the CuTe JIT sees the argument.
-               causal=False, softmax_scale=float(scale),
-               window_size=fa4_window)
+               softmax_scale=float(scale), **mask_kwargs)
     except Exception as exc:
         raise RuntimeError(
             f"FA4 SM121 execution failed for QK={q.shape[-1]}, V={v.shape[-1]}, "
