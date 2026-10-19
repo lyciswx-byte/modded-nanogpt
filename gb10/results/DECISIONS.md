@@ -8,9 +8,11 @@
 - Two real ARM64 SM121 containers and a successful two-rank 8-step BF16 eager
   smoke have now been reported. Full training, FA4 and graph/FP8 convergence
   remain unverified. NCCL used Socket rather than proven RDMA.
-- Do not enable FA4 by default: the local GB10 run is blocked by Hugging Face
-  authentication while loading the third-party bundle. Keep FP8 linear opt-in
-  pending two-node convergence evidence.
+- Do not enable FA4 by default: the Hub route initially returned HTTP 401,
+  and the available local bundle subsequently failed on the relocated
+  CUTLASS `cute.core.ThrMma` annotation. A scoped compatibility shim is now
+  available but awaits real SM121 re-test. Keep FP8 linear opt-in pending
+  full training convergence evidence.
 - Corrected Triton FP8 masked-load literals and passed the fused FP8 CE
   forward/gradient gate in the current container.
 
