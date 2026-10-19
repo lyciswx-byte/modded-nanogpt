@@ -80,6 +80,7 @@ Real two-node training remains BLOCKED pending a second GB10 host.
 
 With the second host available, the real two-node launch reached preflight on
 both ranks and initialized NCCL successfully after setting
-`GLOO_SOCKET_IFNAME=enp1s0f1np1`. The 8-step smoke then stopped on both ranks
-at data loading with `FileNotFoundError: ./data/fineweb10B/fineweb_train_*.bin`.
-No training step, loss, or gradient was produced.
+`GLOO_SOCKET_IFNAME=enp1s0f1np1`. After mounting the discovered FineWeb data,
+`GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` completed on both ranks.
+The smoke path reached step 8/8 without an exception; it intentionally skips
+final validation and certification.

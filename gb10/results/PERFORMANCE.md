@@ -7,9 +7,15 @@ or 3.2773 CE.
 
 The two-node NCCL sanity completed successfully with AllReduce value `3.0` on
 both ranks. NCCL selected `NET/Socket`; IB/SPCX reported no device, so no RDMA
-bandwidth claim is made. The 8-step training smoke reached preflight and
-memory planning on both nodes but was blocked before step 1 by missing FineWeb
-training files, so there are no throughput or loss measurements.
+bandwidth claim is made. With the local FineWeb data mounted read-only, the
+8-step smoke completed on both nodes:
+
+- global token budget: 196,608 tokens (8 × 12,288 local tokens × 2 ranks)
+- rank-0 elapsed time: 13.19 s
+- rank-0 allocated memory at step 8: 19.39 GiB
+- settings: eager SDPA, ATen Gram, no CUDA Graph/FP8/FA4 acceleration
+
+This is a smoke result, not a full-run throughput or validation-loss claim.
 
 The required benchmark commands remain pending on each node:
 

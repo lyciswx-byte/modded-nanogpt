@@ -14,5 +14,5 @@ through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 | FA4 / CuTe | Local bundle found; import BLOCKED (`ThrMma` missing) | BLOCKED |
 | ConnectX-7 interface / transport | `enp1s0f1np1` 192.168.100.10; NCCL used Socket | `enp1s0f1np1` 192.168.100.11; NCCL used Socket |
 
-`nvidia-smi` and the CUDA/PyTorch capability probe passed in the container.
-`ip -br addr`, `ibv_devinfo`, and the two-node launch remain unrun.
+`nvidia-smi`, the CUDA/PyTorch capability probe, and the two-node launch passed
+in the container. NCCL used Socket rather than RDMA on the selected interface.
