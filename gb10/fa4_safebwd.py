@@ -11,6 +11,7 @@ smokes, NOT an optimized production FA4 implementation. It does not prove that
 CuTe backward has been fixed and is excluded from CUDA Graph capture.
 """
 import torch
+import os
 
 from gb10.attention import segmented_sdpa
 
@@ -49,6 +50,8 @@ class _FA4ForwardSDPABackward(torch.autograd.Function):
 
 def forward_fa4_backward_sdpa(q, k, v, cu_seqlens, left_window, scale):
     """Debug only. Default and production continue to use native SDPA."""
+    if os.environ.get("GB10_CUDA_GRAPHS", "0") == "1":
+        raise RuntimeError("FA4+SDPA diagnostic backward cannot enter CUDA graphs")
     if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
         raise RuntimeError("FA4+SDPA diagnostic backward cannot enter CUDA graphs")
     return _FA4ForwardSDPABackward.apply(
