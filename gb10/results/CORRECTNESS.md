@@ -163,3 +163,17 @@ hosts, `GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` completed **PASS** on
 both ranks. Rank 0 reported `step=8/8`, global tokens `65,536`, elapsed
 `12.88s`, allocated `19.39GiB`; rank 1 reached the same final step. This is a
 Socket-only smoke and intentionally performs no final validation or tail ship.
+
+## Local FA4 bundle retest (2026-10-19 UTC)
+
+Bundle path `/media/lycis/data/flash-attn-4-sm120` was mounted as
+`/opt/flash-attn-4-sm120` on both nodes (`GB10_FA4_LOCAL_PATH` set). The loader
+and CUTLASS compatibility annotations succeeded on both nodes, but the forward
+JIT failed identically on each:
+
+`DSLUserCodeError: ARG_ANNOTATION_MISMATCH: expects argument #13
+(window_size_left) to be ... cutlass.base_dsl.typing.Int32 ... but got int`
+
+The error originates in the bundle's `build/torch-cuda/interface.py` during
+`cute.compile`; `gb10/fa4.py` preserves and reports the chained exception.
+FA4 remains **BLOCKED** and opt-in. No FA4 performance number was recorded.

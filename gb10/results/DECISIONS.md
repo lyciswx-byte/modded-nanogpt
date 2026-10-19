@@ -16,3 +16,8 @@
   `b09d028e6d3031465be7814d789e78a48e885d19`. The host-level compile and
   dependency-free tests pass; torch-backed tests and two-node acceptance remain
   explicitly blocked outside the CUDA container and second host.
+
+- Retested the supplied local FA4 bundle on both GB10s. It loads successfully,
+  but its sliding-window JIT has a CuTe `Int32` versus Python `int` annotation
+  mismatch. Kept FA4 disabled by default pending a bundle-side compatibility
+  fix and repeated forward/backward parity.
