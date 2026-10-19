@@ -1,5 +1,15 @@
 # GB10 environment audit
 
+## Current shell re-execution (2026-10-19 UTC)
+
+Checkout: `2xGB10`, commit `b09d028e6d3031465be7814d789e78a48e885d19`.
+The host reports `aarch64`, NVIDIA GB10, driver `580.178.04`, and CUDA
+`13.0` from `nvidia-smi`. `ip -br addr` shows the up ConnectX interfaces
+`enp1s0f1np1` (`192.168.100.10/24`) and `enP2p1s0f1np1`
+(`192.168.101.10/24`). PyTorch, Triton, NCCL, and CuTe versions are
+**BLOCKED** in this shell because `python3` has no `torch`; the existing CUDA
+container must be used for those probes. A second-node probe was not run.
+
 Status: **PARTIAL** on 2026-10-18 (America/Goose_Bay).
 
 The repository checkout is commit `ff98b809e3d8114f690292363d89659fa20a0620`

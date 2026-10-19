@@ -1,5 +1,23 @@
 # GB10 correctness audit
 
+## Re-execution on `2xGB10` (2026-10-19 UTC)
+
+Commit: `b09d028e6d3031465be7814d789e78a48e885d19`.
+
+| Result | Exact command | Observation |
+|---|---|---|
+| PASS | `python3 -m compileall -q gb10 track_1_short` | completed successfully |
+| FAIL (environment) | `python3 -m unittest discover -s gb10 -p 'test_*.py' -v` | 5 policy/import tests passed; 6 torch-backed test modules could not import because host Python has no `torch` (`ModuleNotFoundError`) |
+| PASS | `git diff --check` | no whitespace errors |
+| BLOCKED | `python -m unittest gb10.test_accelerated gb10.test_tiles gb10.test_graph_attention -v` | no CUDA/PyTorch runtime is installed in this checkout; no GB10 container was available to invoke |
+| BLOCKED | `bash gb10/run_two_nodes.sh` | requires a second reachable GB10 and `MASTER_ADDR`/`NODE_RANK`; not run, no fabricated two-node result |
+
+The host is an ARM64 NVIDIA GB10 system (`nvidia-smi`: driver 580.178.04,
+CUDA 13.0), but the repository shell is the host Python rather than the
+validated CUDA container. Therefore this run certifies only source compilation
+and the dependency-free tests. It does not certify kernels, NCCL, convergence,
+throughput, or validation loss.
+
 ## Portable checks
 
 | Result | Exact command | Observation |
