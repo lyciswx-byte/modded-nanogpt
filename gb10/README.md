@@ -418,3 +418,42 @@ remains `separate` until on-device timing shows a real gain; use
 
 For code-level regression and hardware acceptance requirements, consult
 [AUDIT.md](AUDIT.md). Static/CPU CI cannot certify two-node training.
+
+## Codex two-node feedback and Oct-18 follow-up (branch `codex/reexecute-ff98`)
+
+The remote feedback branch was fast-forward-integrated into `2xGB10`.
+The initial real two-rank BF16 eager 8-step smoke PASSED (rank0 13.19s,
+19.39GiB allocated); NCCL used `NET/Socket`, not verified RoCE/RDMA.
+The reported 196,608 tokens were **overcounted** using the maximum
+stage-3 local batch. With default `GB10_BATCH_DIVISOR=16`, first 8
+steps have 65,536 GLOBAL tokens. New trainer logs exact actual batch
+token totals after every configured reporting interval.
+
+FA4's local SM120 bundle failed at
+`cutlass.cute.core.ThrMma`, which CUTLASS DSL moved to `cutlass.cute`.
+The explicit FA4 loader now applies `gb10.cute_compat` before import:
+it restores only the **real moved type objects** (ThrMma, TiledMma,
+ThrCopy, TiledCopy), not an emulation. This is a source API annotation
+compatibility layer, **not** a claim that FA4 JIT or backward passed.
+To disable it, set `GB10_FA4_CUTE_COMPAT=0`.
+
+On each GB10 with the supplied local FA4 bundle mounted:
+```bash
+export GB10_FA4_LOCAL_PATH=/opt/flash-attn-4-sm120
+export GB10_FA4_CUTE_COMPAT=1
+python -m unittest gb10.test_cute_compat -v
+python -m unittest gb10.test_accelerated.AcceleratedGB10.test_fa4_varlen_mixed_heads_forward_backward -v
+```
+Capture the **entire** chained traceback if that still fails. Avoid
+blindly downgrading the container's tested CUDA/PyTorch/CUTLASS stack.
+
+For RDMA visibility, run `python -c 'from gb10.fabric import
+report_fabric; report_fabric()'` on each container. Optional
+`GB10_REQUIRE_RDMA_DEVICE=1` aborts if sysfs and device nodes are not
+visible; it **does not certify** that NCCL selected RDMA. For actual
+RoCE investigate host driver, Docker device passthrough and NCCL
+backend logs with the two-node NCCL tests. Socket can be correct but
+may limit performance.
+
+See [CORRECTNESS](results/CORRECTNESS.md) and
+[PERFORMANCE](results/PERFORMANCE.md) for honest PASS/BLOCKED entries.
