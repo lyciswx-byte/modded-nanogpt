@@ -26,7 +26,7 @@ current exact traceback is HTTP 401 from Hugging Face while resolving
 `SecondNatureComputing/flash-attn-4-sm120` without a container credential.
 FP8 projection passes the revised parity gate in this commit and remains
 opt-in pending two-node convergence evidence.
-Two-node NCCL smoke and full training remain BLOCKED.
+The later real two-node 8-step smoke PASSED; full training and 3.28 validation remain BLOCKED.
 
 ## Follow-up review of `b09d028` (post-commit patches)
 
@@ -76,7 +76,7 @@ Same-host two-rank NCCL probe was also attempted with
 `NCCL_DEBUG=INFO NCCL_SOCKET_IFNAME=enp1s0f1np1 torchrun --standalone --nproc_per_node=2`.
 It **FAIL**ed with `ncclInvalidUsage: Multiple Ranks are using the same
 GPU/Partition`; this is an invalid same-GPU simulation, not a two-node result.
-Real two-node training remains BLOCKED pending a second GB10 host.
+At this earlier attempt, a second host was unavailable. A later two-node 8-step smoke PASSED; the full run remains untested.
 
 With the second host available, the real two-node launch reached preflight on
 both ranks and initialized NCCL successfully after setting
@@ -84,3 +84,29 @@ both ranks and initialized NCCL successfully after setting
 `GB10_SMOKE_STEPS=8 bash gb10/run_two_nodes.sh` completed on both ranks.
 The smoke path reached step 8/8 without an exception; it intentionally skips
 final validation and certification.
+
+## Review of codex/reexecute-ff98 (627209636e67) and current repairs
+
+- **PASS from the feedback branch:** real two-node NCCL AllReduce,
+  8/8 eager BF16 training steps, and one-device FP8 Linear's revised
+  numerical test. FP8 convergence/full training were not measured.
+- **FA4 failure source:** local SM120 package import raises
+  `AttributeError: module 'cutlass.cute.core' has no attribute 'ThrMma'`.
+  NVIDIA moved the real class to `cutlass.cute.ThrMma`. The follow-up
+  `gb10/cute_compat.py` adds aliases for moved **existing** CUTLASS
+  type objects *only when FA4 is selected*, before the local/Hub bundle
+  loads. Alias creation and tiny fake local-package import have CPU
+  tests. **Full FA4 loading and backward remain NOT RETESTED on SM121.**
+- **Performance report correction:** 196,608 tokens was derived by
+  treating later-stage `max_step=12,288` local tokens as each initial
+  step's batch. At the default divisor 16 the actual scheduled
+  first-eight-step budget is 65,536 GLOBAL tokens. The updated trainer
+  prints/accumulates actual per-stage global token counts.
+- **Network:** NCCL communication passed but chose Socket, not RDMA.
+  New `gb10/fabric.py` reports device visibility and can fail fast
+  when `GB10_REQUIRE_RDMA_DEVICE=1`. No code change alone guarantees
+  RoCE without host drivers, Docker passthrough and NCCL plugin.
+- **Remaining gates:** rerun FA4 single-GPU forward/backward in the
+  original image; inspect `NCCL_DEBUG=INFO` on both hosts; re-measure
+  8-/128-step work with token counter; capture full graphs and final CE
+  only after the corresponding tests succeed.
