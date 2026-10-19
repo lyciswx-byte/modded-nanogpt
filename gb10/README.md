@@ -65,6 +65,12 @@ For RDMA, expose the host InfiniBand/RoCE devices via the **appropriate**
 hardcode a `mlx5_0` HCA or `eth0` interface; interfaces differ with each GB10 OEM,
 firmware and network configuration.
 
+For the validated local GB10 setup, the container also needs
+`--device /dev/infiniband --ulimit memlock=-1:-1 --cap-add IPC_LOCK`, with
+`NCCL_NET=IB`, `NCCL_IB_HCA=rocep1s0f1,roceP2p1s0f1`, and
+`NCCL_SOCKET_IFNAME=enp1s0f1np1`. The launcher refuses to run when no active
+RoCE link is visible and prints the selected HCA/interface.
+
 ### Two-host rendezvous
 
 The ConnectX-7 port/cable and network must already be configured on both GB10s.

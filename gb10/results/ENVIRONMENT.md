@@ -12,7 +12,7 @@ through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 | Driver / CUDA runtime | 580.178.04 / CUDA 13.4 | 580.178.04 / CUDA 13.4 |
 | PyTorch / Triton / NCCL | 2.14.0a0+b2c75dd / 3.8.0 / 2.31.2 | 2.14.0a0+b2c75dd / 3.8.0 / 2.31.2 |
 | FA4 / CuTe | Local bundle found; import BLOCKED (`ThrMma` missing) | BLOCKED |
-| ConnectX-7 interface / transport | `enp1s0f1np1` 192.168.100.10; NCCL used Socket | `enp1s0f1np1` 192.168.100.11; NCCL used Socket |
+| ConnectX-7 interface / transport | `enp1s0f1np1` 192.168.100.10; active HCA `rocep1s0f1`, `roceP2p1s0f1`; NCCL `NET/IB` verified | `enp1s0f1np1` 192.168.100.11; active HCA `rocep1s0f1`, `roceP2p1s0f1`; NCCL `NET/IB` verified |
 
 `nvidia-smi`, the CUDA/PyTorch capability probe, and the two-node launch passed
 in the container. NCCL used Socket rather than RDMA on the selected interface.
