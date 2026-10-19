@@ -110,3 +110,17 @@ final validation and certification.
   original image; inspect `NCCL_DEBUG=INFO` on both hosts; re-measure
   8-/128-step work with token counter; capture full graphs and final CE
   only after the corresponding tests succeed.
+
+## Later explicit RoCE two-node smoke
+
+After the initial Socket-mode two-node training smoke, Codex configured
+both ARM64 containers with exposed `/dev/infiniband`, unlimited memlock,
+`NCCL_NET=IB` and the **observed** active HCAs
+`rocep1s0f1,roceP2p1s0f1`. NCCL reported `NET/IB/0` and
+`NET/IB/1`, and both GB10s again completed `GB10_SMOKE_STEPS=8`.
+Rank0 elapsed was reported as 12.69s; this is **not** a final benchmark.
+
+`gb10/run_two_nodes.sh` now offers `GB10_ROCE_PROFILE=1` for these
+measured ports rather than hardcoding those HCAs for all installations.
+`GB10_REQUIRE_RDMA_DEVICE=1` checks device visibility, NOT measured
+bandwidth. A full 1194-step training/validation run is still missing.
