@@ -24,4 +24,4 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
       - name: Reference attention / MTP CE / MLP backward tests on CPU
         run: |
-          python -m unittest gb10.test_attention gb10.test_loss gb10.test_model_math gb10.test_graph_attention gb10.test_policy gb10.test_import_guards gb10.test_accel_layout gb10.test_precision -v
+          python -m unittest gb10.test_attention gb10.test_loss gb10.test_model_math gb10.test_graph_attention gb10.test_policy gb10.test_import_guards gb10.test_accel_layout gb10.test_precision gb10.test_cute_compat gb10.test_token_metrics -v
