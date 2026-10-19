@@ -401,3 +401,20 @@ These are **code-level corrections**. Only CI CPU/reference checks have been
 run; an actual 2×GB10 end-to-end smoke, numerical FP8 graph backward and
 full FineWeb validation remain hardware acceptance blockers. Do not report
 this branch as measured-faster or record-equivalent until those tests pass.
+
+## Latest follow-on work and Codex handoff
+
+The repository now contains a task-ready [Codex prompt](CODEX_PROMPT.md)
+covering correctness gates, real two-node SM121 profiling, Triton Tile/FA4/FP8
+experiments, GPU Graph replay and reproducible benchmark reporting.
+
+`gb10/graph_attention.py` also supports
+`GB10_GRAPH_SEGMENT_LOOKUP=separate|fused`; `fused` issues one
+`searchsorted` over concatenated Q/K positions instead of two.
+Both modes are compared on CPU for forward/backward parity over all
+record #92 QK/V width combinations and duplicate BOS boundaries. The default
+remains `separate` until on-device timing shows a real gain; use
+`gb10/bench_graph.py` to compare them on each GB10.
+
+For code-level regression and hardware acceptance requirements, consult
+[AUDIT.md](AUDIT.md). Static/CPU CI cannot certify two-node training.
