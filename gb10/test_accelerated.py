@@ -53,6 +53,29 @@ class AcceleratedGB10(unittest.TestCase):
                                 f"FA4 backward diff {float((a-b).abs().max())}")
             torch.cuda.synchronize()
 
+    def test_fa4_forward_sdpa_backward_debug_mode(self):
+        # This test intentionally never calls the third-party FA4 backward.
+        # It is a diagnosis gate, not a production performance certification.
+        from gb10.fa4_safebwd import forward_fa4_backward_sdpa
+        for dqk, dv in ((64, 64), (64, 128), (128, 128)):
+            torch.manual_seed(dqk + dv + 44)
+            lens = (32, 96)
+            ends = torch.tensor([0, 32, 128, 128], dtype=torch.int32)
+            q = torch.randn(128, 6, dqk, device="cuda", dtype=torch.bfloat16,
+                            requires_grad=True)
+            k = torch.randn_like(q, requires_grad=True)
+            v = torch.randn(128, 6, dv, device="cuda", dtype=torch.bfloat16,
+                            requires_grad=True)
+            scale = .13 if dqk == 64 else .085
+            y = forward_fa4_backward_sdpa(q, k, v, ends, 64, scale)
+            ref = segmented_sdpa(q, k, v, ends, 64, scale)
+            torch.testing.assert_close(y.float(), ref.float(), atol=.085, rtol=.06)
+            probe = torch.randn_like(y)
+            actual = torch.autograd.grad(y, (q,k,v), probe, retain_graph=True)
+            expected = torch.autograd.grad(ref, (q,k,v), probe)
+            for a,b in zip(actual, expected):
+                torch.testing.assert_close(a.float(), b.float(), atol=.02, rtol=.02)
+
     def test_fp8_projection_and_grads(self):
         from gb10.fp8_linear import linear
         torch.manual_seed(103)
