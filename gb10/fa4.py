@@ -25,7 +25,10 @@ def load_fa4():
                            "see gb10/README.md") from exc
     # The SM120 bundle contains an alternative warp-MMA implementation,
     # not an SM100 tcgen05/TMEM binary or SM90 WGMMA.
-    kernel = get_kernel(FA4_MODEL, version=1)
+    # kernels>=0.10 requires explicit trust for this third-party bundle.
+    # Keep this opt-in path fail-closed; the repository and version are fixed
+    # above and no fallback to the H100 FA3 loader is permitted.
+    kernel = get_kernel(FA4_MODEL, version=1, trust_remote_code=True)
     fn = kernel.flash_attn_varlen_func
     try:
         sig = inspect.signature(fn)

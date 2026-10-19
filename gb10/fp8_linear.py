@@ -17,7 +17,7 @@ import triton.language as tl
 @triton.jit
 def _quantize(src, dst, scale, N:tl.constexpr, BLOCK:tl.constexpr):
     i=tl.program_id(0)*BLOCK+tl.arange(0,BLOCK)
-    x=tl.load(src+i, i<N, other=0).to(tl.float32)
+    x=tl.load(src+i, i<N, other=0.0).to(tl.float32)
     s=tl.load(scale)
     v=tl.minimum(448.,tl.maximum(-448., x / s))
     tl.store(dst+i,v.to(tl.float8e4nv),i<N)

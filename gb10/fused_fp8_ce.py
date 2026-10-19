@@ -31,7 +31,7 @@ def _partials(X,Scale,Out,V:tl.constexpr,CHUNKS:tl.constexpr,BK:tl.constexpr):
     c=tl.program_id(1)
     offs=c*BK+tl.arange(0,BK)
     scale=tl.load(Scale)
-    raw=tl.load(X+r*V+offs,offs<V,other=0).to(tl.float32)*scale
+    raw=tl.load(X+r*V+offs,offs<V,other=0.0).to(tl.float32)*scale
     z,_=_z(raw)
     e=tl.exp(z-23.)
     tl.store(Out+r*CHUNKS+c,tl.sum(tl.where(offs<V,e,0.0),0))
@@ -52,13 +52,13 @@ def _finalize(X,Scale,Part,Logz,Loss,Targets,Prefix,Weights,PrefixWeight,
     for k in tl.static_range(K):
         valid=global_row+k<TOTAL
         idx=tl.load(Targets+global_row+k,valid,other=0)
-        raw=tl.load(X+row*V+idx,valid,other=0).to(tl.float32)*scale
+        raw=tl.load(X+row*V+idx,valid,other=0.0).to(tl.float32)*scale
         z,_=_z(raw)
         w=tl.load(Weights+k)
         loss+=tl.where(valid,w*(logz-z),0.)
     pfx=tl.load(Prefix+global_row)
     pw=tl.load(PrefixWeight)
-    rawp=tl.load(X+row*V+tl.maximum(pfx,0),pfx>=0,other=0).to(tl.float32)*scale
+    rawp=tl.load(X+row*V+tl.maximum(pfx,0),pfx>=0,other=0.0).to(tl.float32)*scale
     zp,_=_z(rawp)
     loss+=tl.where(pfx>=0,pw*(logz-zp),0.)
     tl.store(Loss+row,loss)
@@ -73,7 +73,7 @@ def _backward(X,Scale,Logz,Targets,Prefix,Weights,PrefixWeight,G,Out,
     off=c*BK+tl.arange(0,BK)
     mask=off<V
     row=BASE+r
-    raw=tl.load(X+r*V+off,mask,other=0).to(tl.float32)*tl.load(Scale)
+    raw=tl.load(X+r*V+off,mask,other=0.0).to(tl.float32)*tl.load(Scale)
     z,p=_z(raw)
     norm=tl.load(Logz+r)
     weight_sum=tl.full((),0.,tl.float32)
