@@ -12,6 +12,13 @@ export GB10_PROFILE=1
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+# PyTorch creates a small CPU/Gloo process group alongside NCCL. On hosts
+# whose hostname resolves to 127.0.1.1, leaving this unset makes startup fail
+# before NCCL even reaches the training loop. Reuse the explicitly selected
+# fabric interface unless the caller supplied a separate Gloo interface.
+if [[ -n "${NCCL_SOCKET_IFNAME:-}" ]]; then
+  export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-$NCCL_SOCKET_IFNAME}"
+fi
 # GB10 sm_121 needs an appropriate CUDA-13 ptxas for runtime-generated Triton.
 if [[ -x /usr/local/cuda/bin/ptxas && -z "${TRITON_PTXAS_PATH:-}" ]]; then
   export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas

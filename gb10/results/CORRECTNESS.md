@@ -77,3 +77,9 @@ Same-host two-rank NCCL probe was also attempted with
 It **FAIL**ed with `ncclInvalidUsage: Multiple Ranks are using the same
 GPU/Partition`; this is an invalid same-GPU simulation, not a two-node result.
 Real two-node training remains BLOCKED pending a second GB10 host.
+
+With the second host available, the real two-node launch reached preflight on
+both ranks and initialized NCCL successfully after setting
+`GLOO_SOCKET_IFNAME=enp1s0f1np1`. The 8-step smoke then stopped on both ranks
+at data loading with `FileNotFoundError: ./data/fineweb10B/fineweb_train_*.bin`.
+No training step, loss, or gradient was produced.
