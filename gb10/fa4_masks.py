@@ -26,7 +26,7 @@ def fa4_mask_kwargs(*, causal, window):
     if window is None:
         return dict(causal=bool(causal),
                     window_size=(_cute_int32(-1), _cute_int32(-1)))
-    if not isinstance(window, int) or window < 0:
+    if type(window) is not int or window < 0:
         raise ValueError("FA4 local window must be a nonnegative integer or None")
     return dict(
         causal=False,
