@@ -14,6 +14,8 @@ import sys
 import torch
 import torch.nn.functional as F
 
+from gb10.cute_compat import install_legacy_cute_annotations, cutlass_version
+
 
 FA4_MODEL = "SecondNatureComputing/flash-attn-4-sm120"
 
@@ -22,6 +24,13 @@ FA4_MODEL = "SecondNatureComputing/flash-attn-4-sm120"
 def load_fa4():
     if torch.cuda.get_device_capability() != (12, 1):
         raise RuntimeError("SM121 FA4 adapter only supports the GB10 compute capability (12, 1)")
+    # Third-party CuTe DSL annotations may still reference the pre-4.6
+    # cute.core namespace. Alias only classes that are present in NVIDIA's
+    # supported top-level cute API. No JIT code or kernels are rewritten.
+    aliased = install_legacy_cute_annotations()
+    if aliased:
+        print(f"[GB10 FA4] CUTLASS {cutlass_version()}: "
+              f"compatibility annotations {', '.join(aliased)}", flush=True)
     local_root = os.environ.get("GB10_FA4_LOCAL_PATH")
     if local_root:
         package_dir = os.path.join(local_root, "build", "torch-cuda")
@@ -32,13 +41,26 @@ def load_fa4():
             "flash_attn_4_sm120", init_py,
             submodule_search_locations=[package_dir],
         )
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not create loader for local FA4: {init_py}")
         module = importlib.util.module_from_spec(spec)
+        previous = sys.modules.get(spec.name)
         sys.modules[spec.name] = module
         try:
             spec.loader.exec_module(module)
+            fn = module.flash_attn_varlen_func
         except Exception as exc:
-            raise RuntimeError("local SM121 FA4 bundle failed to import") from exc
-        return module.flash_attn_varlen_func
+            # A failed CuTe import must not poison a later corrected retry.
+            if previous is None:
+                sys.modules.pop(spec.name, None)
+            else:
+                sys.modules[spec.name] = previous
+            raise RuntimeError(
+                f"Local SM121 FA4 bundle failed to import from {init_py} "
+                f"with nvidia-cutlass-dsl={cutlass_version()}; "
+                "the original exception is chained."
+            ) from exc
+        return fn
     try:
         from kernels import get_kernel
     except ImportError as exc:
