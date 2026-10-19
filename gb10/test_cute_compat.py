@@ -85,9 +85,9 @@ class CutlassCompatibilityTests(unittest.TestCase):
             pkg = pathlib.Path(temp) / "build" / "torch-cuda"
             pkg.mkdir(parents=True)
             (pkg / "__init__.py").write_text(
-                "from cutlass.cute.core import ThrMma\\n"
-                "def flash_attn_varlen_func(*args, **kwargs):\\n"
-                "    return ThrMma\\n",
+                "from cutlass.cute.core import ThrMma\n"
+                "def flash_attn_varlen_func(*args, **kwargs):\n"
+                "    return ThrMma\n",
                 encoding="utf-8",
             )
             load_fa4.cache_clear()
