@@ -503,7 +503,9 @@ fix for the native CuTe backward and cannot run inside CUDA Graph
 capture. A full native fix needs the external bundle's exact source,
 the report from `python -m gb10.diagnose_fa4_backward`, and a GPU retest.
 
-The short SHA `4044024` mentioned in local Codex feedback was not
-reachable from this repository's GitHub refs when this diagnostic was
-written. These changes are isolated utilities and **do not overwrite**
-that unpushed patch.
+Commit [4044024](https://github.com/lyciswx-byte/modded-nanogpt/commit/4044024820702bb61b4dc22c1b345f9ab377c41a)
+is now available in the GitHub commit history and has been reviewed.
+It patches the FA4 **adapter** and report, not the third-party CuTe
+backward kernel. The diagnostic now shares the adapter's typed Int32
+window-mask arguments via `gb10/fa4_masks.py`, preventing diagnostic
+JIT discrepancies. The native CuTe backward remains unverified.
