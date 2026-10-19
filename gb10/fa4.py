@@ -9,6 +9,7 @@ import functools
 import inspect
 
 import torch
+import torch.nn.functional as F
 
 
 FA4_MODEL = "SecondNatureComputing/flash-attn-4-sm120"
@@ -28,8 +29,15 @@ def load_fa4():
     # kernels>=0.10 requires explicit trust for this third-party bundle.
     # Keep this opt-in path fail-closed; the repository and version are fixed
     # above and no fallback to the H100 FA3 loader is permitted.
-    kernel = get_kernel(FA4_MODEL, version=1, trust_remote_code=True)
-    fn = kernel.flash_attn_varlen_func
+    try:
+        kernel = get_kernel(FA4_MODEL, version=1, trust_remote_code=True)
+        fn = kernel.flash_attn_varlen_func
+    except Exception as exc:
+        raise RuntimeError(
+            "SM121 FA4 bundle could not be loaded in this CUDA/ARM64 container. "
+            "Check kernels/nvidia-cutlass-dsl/apache-tvm-ffi versions and the "
+            "original chained exception; the FA4 backend remains opt-in."
+        ) from exc
     try:
         sig = inspect.signature(fn)
         parameters = sig.parameters
@@ -43,6 +51,27 @@ def load_fa4():
         # checker in test_fa4.py will call the actual function.
         pass
     return fn
+
+
+def pad_mixed_qkv_for_fa4(q, k, v):
+    """Preserve the original QK dot product when FA4 requires equal head dims.
+
+    #92 uses (QK,V)=(64,128), (64,64) and (128,128). Padding Q/K with
+    zeros from 64 to 128 leaves Q@K.T and its gradients mathematically
+    unchanged, while making FA4's (Dq,Dk,Dv) shape uniform. Keep the
+    ORIGINAL softmax scale: changing it to 1/sqrt(128) is incorrect.
+    """
+    if q.shape[:-1] != k.shape[:-1] or q.shape[:-1] != v.shape[:-1]:
+        raise ValueError("mixed-head tensors must share [tokens, heads]")
+    if q.shape[-1] != k.shape[-1]:
+        raise ValueError("Q and K head dims differ")
+    d_qk, d_v = q.shape[-1], v.shape[-1]
+    if (d_qk, d_v) not in ((64, 64), (64, 128), (128, 128)):
+        raise ValueError(f"Unsupported #92 mixed QK/V dims: {(d_qk,d_v)}")
+    if d_qk == d_v:
+        return q, k, v
+    pad = d_v - d_qk
+    return F.pad(q, (0, pad)), F.pad(k, (0, pad)), v
 
 
 def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
@@ -65,11 +94,19 @@ def packed_fa4(q, k, v, cum_seqlens, left_window, scale):
     max_seqlen = max(b - a for a, b in zip(ends, ends[1:]))
     cu = torch.tensor(ends, dtype=torch.int32, device=q.device)
     fn = load_fa4()
-    y = fn(q.contiguous(), k.contiguous(), v.contiguous(),
+    q_compatible, k_compatible, v_compatible = pad_mixed_qkv_for_fa4(q, k, v)
+    try:
+        y = fn(q_compatible.contiguous(), k_compatible.contiguous(), v_compatible.contiguous(),
            cu_seqlens_q=cu, cu_seqlens_k=cu,
            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-           causal=True, softmax_scale=float(scale),
-           window_size=(int(left_window), 0))
+               causal=True, softmax_scale=float(scale),
+               window_size=(int(left_window), 0))
+    except Exception as exc:
+        raise RuntimeError(
+            f"FA4 SM121 execution failed for QK={q.shape[-1]}, V={v.shape[-1]}, "
+            f"tokens={q.shape[0]}, heads={q.shape[1]}, window={left_window}. "
+            "Original exception retained; use GB10_ATTN_BACKEND=sdpa while diagnosing."
+        ) from exc
     if isinstance(y, (tuple, list)):
         y = y[0]
     assert y.shape == v.shape, (y.shape, v.shape)
