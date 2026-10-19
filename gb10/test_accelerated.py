@@ -62,7 +62,24 @@ class AcceleratedGB10(unittest.TestCase):
         ref = F.linear(x,w)
         self.assertEqual(y.shape, ref.shape)
         self.assertTrue(torch.isfinite(y).all())
-        self.assertTrue(torch.allclose(y.float(),ref.float(),atol=0.1,rtol=0.1))
+        # FP8 is approximate: validate actual cuBLASLt output against the
+        # same explicitly quantized GEMM, then enforce bounded E4M3 RMS/tails
+        # versus the BF16 reference. A blanket 80k-element allclose fails on
+        # normal E4M3 rounding even when the kernel is mathematically correct.
+        from gb10.fp8_linear import quantize_e4m3
+        from gb10.gemm_layout import prepare_fp8_gemm_input
+        from gb10.precision import assert_fp8_budget
+        padded, original = prepare_fp8_gemm_input(x.detach())
+        xq, sx = quantize_e4m3(padded)
+        wq, sw = quantize_e4m3(w.detach())
+        quantized_reference = (
+            ((xq.float() @ wq.float().T) * (sx * sw)).to(torch.bfloat16)
+        )[:original]
+        torch.testing.assert_close(
+            y.float(), quantized_reference.float(), atol=0.04, rtol=0.025,
+        )
+        stats = assert_fp8_budget(y.detach(), ref.detach())
+        print(f"[GB10 FP8 parity] {stats}")
         probe = torch.randn_like(y)
         gy = torch.autograd.grad(y,(x,w),probe,retain_graph=True)
         gr = torch.autograd.grad(ref,(x,w),probe)
