@@ -457,3 +457,31 @@ may limit performance.
 
 See [CORRECTNESS](results/CORRECTNESS.md) and
 [PERFORMANCE](results/PERFORMANCE.md) for honest PASS/BLOCKED entries.
+
+### Verified optional two-host RoCE transport profile
+
+A subsequent Codex feedback run exposed `/dev/infiniband` to the two
+GB10 containers, selected `NCCL_NET=IB` and the *actually observed*
+`rocep1s0f1,roceP2p1s0f1` HCAs. Both ranks confirmed `NET/IB` and
+completed the same eight-step smoke. On these two specific devices,
+set **on each node**:
+
+```bash
+export GB10_ROCE_PROFILE=1
+export NCCL_DEBUG=INFO
+# optional topology overrides if device names differ:
+# export NCCL_IB_HCA="<your-active-HCA-ports>"
+# export NCCL_SOCKET_IFNAME="<your-fast-IP-interface>"
+bash gb10/run_two_nodes.sh
+```
+
+This flag enforces RDMA device visibility, selects the measured HCA pair
+unless overridden and rejects an inactive link if the `rdma` utility
+is installed. The Docker runtime still needs host networking and
+`/dev/infiniband` passthrough, plus adequate `memlock`.
+**Do not enable GB10_ROCE_PROFILE indiscriminately:** interface names
+are host-specific; absent hardware should fail instead of silently
+pretending RDMA is active.
+
+The two single-run rank0 timings of 13.19s and 12.69s are not an
+end-to-end speedup measurement; see [PERFORMANCE](results/PERFORMANCE.md).
