@@ -201,6 +201,11 @@ def dispatch(q, k, v, seqlens, window, scale):
         return graph_sdpa(q, k, v, seqlens, window, scale)
     if backend == "fa4":
         return packed_fa4(q, k, v, seqlens, window, scale)
+    if backend == "fa4-safebwd":
+        # Diagnostic only. Checks FA4 forward numerics, then recomputes a
+        # trusted SDPA backward. Do NOT confuse this with a fixed FA4 kernel.
+        from gb10.fa4_safebwd import forward_fa4_backward_sdpa
+        return forward_fa4_backward_sdpa(q, k, v, seqlens, window, scale)
     if backend == "hybrid":
         # FA4's launch overhead is measurable for tiny segments on SM121.
         # The threshold must be selected from actual GB10 forward+backward
@@ -214,4 +219,4 @@ def dispatch(q, k, v, seqlens, window, scale):
     if backend in ("sdpa", "hybrid"):
         from gb10.attention import segmented_sdpa
         return segmented_sdpa(q, k, v, seqlens, window, scale)
-    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa', 'fa4', 'hybrid' or 'graph'")
+    raise ValueError("GB10_ATTN_BACKEND must be 'sdpa', 'fa4', 'fa4-safebwd', 'hybrid' or 'graph'")
