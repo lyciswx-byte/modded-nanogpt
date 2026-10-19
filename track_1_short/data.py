@@ -222,6 +222,11 @@ def distributed_data_generator(filename_pattern: str, num_tokens: int, max_seq_l
         _cum_lengths = _cum_lengths.to(dtype=torch.int32)
         _ngram_ids = ngram_row_ids(_inputs)
         inputs, targets, cum_seqlens, ngram_ids = staging.upload(_inputs, _targets, _cum_lengths, _ngram_ids)
+        if os.environ.get("GB10_PROFILE") == "1" and os.environ.get("GB10_ATTN_BACKEND", "sdpa") != "graph":
+            # FA4 / eager SDPA iterate document boundaries on the CPU.
+            cum_seqlens = _cum_lengths
+        # In graph mode the padded boundaries MUST remain on the device:
+        # every replay searches the live GPU offsets without host sync.
 
         new_params = yield Batch(
             inputs=inputs,

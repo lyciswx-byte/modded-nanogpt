@@ -1,5 +1,6 @@
 """The GPT model: embeddings, 11 transformer blocks with MUDD skip connections, and the loss."""
 import math
+import os
 from dataclasses import dataclass
 
 import torch
@@ -30,6 +31,7 @@ from track_1_short.sampled_softmax import SampledLoss
 # Layer topology (11 layers). Depth cut from record #360 (ANVIL2): layer 7 is removed whole -- its
 # residual scaling and x0 injection stay, so cache[7] still exists -- and layers 4 and 9 run
 # their MLP only. Layer 6 has had no attention since @YouJiacheng; it adds a gated skip from layer 3.
+GB10_NATIVE = os.environ.get("GB10_PROFILE") == "1"
 NUM_LAYERS = 11
 NO_ATTN_LAYERS = (4, 6, 7, 9)
 NO_MLP_LAYERS = (7,)
@@ -113,7 +115,7 @@ FP8_ATTN_GRAD_SCALE = 1.0 / 448.0
 
 # Validation computes the loss over slabs of this many rows (record #360), so its [rows, vocab] fp32
 # logits (6.6 GB per slab) stay small next to the rank's 16 GB n-gram shard.
-EVAL_CE_SLAB_ROWS = 32768
+EVAL_CE_SLAB_ROWS = int(os.environ.get("GB10_EVAL_SLAB_ROWS", "1024")) if GB10_NATIVE else 32768
 
 # FP8 MLP scales (see perf/kernels/mlp.py), from record #360.
 FP8_MLP_X_SCALE = 2 ** -4      # static: post-RMS-norm rows have max|x| <= sqrt(768) = 27.7 < 448 * 2^-4
@@ -498,6 +500,15 @@ class GPT(nn.Module):
     def _mlp(self, x_normed, c_fc, c_proj, fp8_args):
         """relu(x @ c_fc.T)^2 @ c_proj; in FP8 (training) when `fp8_args` holds this slot's _mlp_fp8_args,
         else bf16 (validation)."""
+        if GB10_NATIVE:
+            # Hopper's descriptor/TMA MLP kernel is not a valid sm_121 default.
+            # As in record #92, validation uses BF16, not the approximate
+            # FP8 training pathway (including the output projection).
+            if not self.training:
+                return F.linear(F.relu(F.linear(x_normed, c_fc)).square(), c_proj.T)
+            from gb10.fp8_linear import dispatch as gb10_linear
+            intermediate = gb10_linear(x_normed, c_fc)
+            return gb10_linear(F.relu(intermediate).square(), c_proj.T)
         if fp8_args is None:
             return ReLUSqrdMLP(x_normed, c_fc, c_proj)
         return ReLUSqrdMLP(x_normed, c_fc, c_proj, *fp8_args)
@@ -562,7 +573,7 @@ class GPT(nn.Module):
         key_offset = [i in LONG_WINDOW_LAYERS for i in range(self.num_layers)]
 
         # FP8 is training-only; validation runs the bf16 path.
-        use_fp8 = self.training
+        use_fp8 = self.training and not GB10_NATIVE
         attn_f8_weights = self._attn_fp8_weights() if use_fp8 else None
         mlp_up_f8 = self._mlp_up_f8.unbind(0) if use_fp8 else None
 
@@ -783,6 +794,13 @@ class GPT(nn.Module):
         """
         # @Grad62304977 added tanh softcapping following Gemma 2 paper, @KoszarskyB reduced it from 30 to 15
         # @YouJiacheng shifted it by +15 (2*sigmoid(2*x)=tanh(x)+1). @classiclarryd updated to 23*sigmoid((logits+5)/7.5)
+        if self.training and GB10_NATIVE:
+            from gb10.loss import native_training_loss
+            prefix_targets = self.prefix_table[target_seq]
+            return native_training_loss(
+                x.view(-1, x.size(-1)), target_seq, mtp_weights,
+                prefix_targets, prefix_weight, self.lm_head.weight, sampled_loss,
+            )
         if self.training and sampled_loss is not None:
             # Targets and prefix targets arrive as positions in the candidate set, built on the host.
             n = target_seq.size(0)

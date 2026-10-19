@@ -18,9 +18,9 @@ class Hyperparameters:
     data_path = os.environ.get("DATA_PATH", ".")
     train_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_train_*.bin") # input .bin to train on
     val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
-    val_tokens: int = 10485760 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
+    val_tokens: int = int(os.environ.get("GB10_VAL_TOKENS", "10485760")) if os.environ.get("GB10_PROFILE") == "1" else 10485760
     # batch sizes
-    val_batch_size: int = 4 * 64 * 1024 * 8
+    val_batch_size: int = int(os.environ.get("GB10_VAL_BATCH_TOKENS", "65536")) if os.environ.get("GB10_PROFILE") == "1" else 4 * 64 * 1024 * 8
     # schedule: the base step count of the main stages (SCHEDULE_GROWTH_STEPS are added on top), then
     # the extension stage. The override is for step-count sweeps (record #360's KX_STEPS).
     num_scheduled_iterations: int = int(os.environ.get("NUM_SCHEDULED_ITERATIONS", "1122"))
@@ -89,3 +89,13 @@ TRAINING_STAGES = [
 ]
 assert VIRTUAL_SEQ_CAP % BLOCK_SIZE == 0
 assert any(s.train_max_seq_len > VIRTUAL_SEQ_CAP for s in TRAINING_STAGES), "VIRTUAL_SEQ_CAP would be inert"
+
+# GB10 LPDDR5X memory bandwidth is much lower than H100 HBM3. The GB10
+# bring-up profile keeps the five stages, but limits local tokens per GPU.
+# It deliberately does NOT claim to preserve #92's 328M-token training budget.
+if os.environ.get("GB10_PROFILE") == "1":
+    _gb10_divisor = int(os.environ.get("GB10_BATCH_DIVISOR", "16"))
+    if _gb10_divisor < 1 or any(s.batch_size % (2 * _gb10_divisor * 16) for s in TRAINING_STAGES):
+        raise ValueError("GB10_BATCH_DIVISOR must produce multiples of 16 tokens per GB10 rank")
+    for _stage in TRAINING_STAGES:
+        _stage.batch_size //= _gb10_divisor

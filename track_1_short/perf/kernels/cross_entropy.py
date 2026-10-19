@@ -312,7 +312,11 @@ def compile_ce_kernel(vocab_size: int):
     kernel.set_shared_memory_config(vocab_size * 2)
     return kernel
 
-ce_fwd_bwd_kernel = compile_ce_kernel(CE_KERNEL_VOCAB_SIZE)
+# Never compile Hopper sm_90 NVRTC at import time on Blackwell GB10.
+# The GB10 training loss uses gb10.loss + optional gb10.fused_fp8_ce.
+# H100 behavior (including eager compile) remains unchanged.
+ce_fwd_bwd_kernel = (None if os.environ.get("GB10_PROFILE") == "1"
+                         else compile_ce_kernel(CE_KERNEL_VOCAB_SIZE))
 
 @torch.library.custom_op("nanogpt::ce_fwd_bwd", mutates_args={"losses", "grad_input"})
 def ce_fwd_bwd(
@@ -332,6 +336,9 @@ def ce_fwd_bwd(
 ) -> None:
     # prefix_weight is a 1-element fp32 device tensor the kernel reads, so the per-step schedule
     # value never becomes a graph constant (a Python float would recompile at every change).
+    if ce_fwd_bwd_kernel is None:
+        raise RuntimeError("H100 sm90 fused CE cannot be used in GB10_PROFILE; "
+                           "use gb10.loss or gb10.fused_fp8_ce")
     ce_fwd_bwd_kernel(
         (n_rows, 1, 1),
         (CE_KERNEL_BLOCK_SIZE, 1, 1),

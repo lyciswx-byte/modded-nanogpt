@@ -1,0 +1,8 @@
+# Optional accelerator dependencies, for your existing GB10 NVIDIA container.
+# Install only AFTER validating its CUDA-13/PyTorch SM121 stack.
+# DO NOT overwrite torch, triton, NCCL or the CUDA runtime here.
+kernels>=0.16.1
+nvidia-cutlass-dsl>=4.4.1
+einops
+apache-tvm-ffi
+quack-kernels

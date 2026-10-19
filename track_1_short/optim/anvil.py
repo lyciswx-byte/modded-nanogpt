@@ -1,4 +1,5 @@
 """ANVIL (for projection matrices) + Adam (for everything else), with explicit comms scheduling."""
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -9,6 +10,32 @@ from torch import Tensor, nn
 
 from track_1_short.perf.bank_scalars import BankScalarStaging
 from track_1_short.perf.kernels.polar_express import XTX, XXT, ba_plus_cAA
+
+# The stock Gram kernels have fixed H100 tile settings (128x128x64/8 warps).
+# They have not been retuned for GB10's sm_121 and 273 GB/s LPDDR5X.
+# Route the initial GB10 baseline through architecture-selected native GEMMs;
+# compare versus sm_121-specialized symmetric Triton only after profiling.
+if os.environ.get("GB10_PROFILE") == "1":
+    if os.environ.get("GB10_GRAM_BACKEND", "aten").lower() == "triton":
+        # Tuned on THIS SM121, cached before graph capture. No Hopper tiles.
+        from gb10.tile_tuner import XXT, XTX, ba_plus_cAA
+    elif os.environ.get("GB10_GRAM_BACKEND", "aten").lower() == "aten":
+        def XXT(A: torch.Tensor, out: torch.Tensor):
+            torch.matmul(A, A.transpose(-1, -2), out=out)
+            return out
+
+        def XTX(A: torch.Tensor, out: torch.Tensor):
+            torch.matmul(A.transpose(-1, -2), A, out=out)
+            return out
+
+        def ba_plus_cAA(A: torch.Tensor, alpha: float, beta: float, out: torch.Tensor):
+            if A.ndim == 3:
+                torch.baddbmm(A, A, A.transpose(-1, -2), beta=beta, alpha=alpha, out=out)
+            else:
+                torch.addmm(A, A, A.transpose(-1, -2), beta=beta, alpha=alpha, out=out)
+            return out
+    else:
+        raise ValueError("GB10_GRAM_BACKEND must be aten or triton")
 from track_1_short.perf.kernels.transpose import transpose_add, transpose_copy
 from track_1_short.perf.replicated_adam import ReplicatedAdam
 

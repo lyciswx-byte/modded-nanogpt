@@ -1,0 +1,8 @@
+# Install INTO an existing GB10 / sm_121 / ARM64 CUDA-13 PyTorch Docker image.
+# NEVER pip-replace that image's tested torch/triton/NCCL with the H100 cu128 pin.
+numpy
+tiktoken
+datasets
+huggingface-hub
+# Hopper-only 'kernels' is not required by native GB10 attention.
+# torch + triton + CUDA runtime intentionally supplied by your validated container.

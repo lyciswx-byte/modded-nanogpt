@@ -11,6 +11,7 @@ one-microbatch-per-step race contract in perf/sampled_softmax_overlap.py.
 
 Provenance: record #360 (ANVIL2).
 """
+import os
 import torch
 import triton
 import triton.language as tl
@@ -29,8 +30,12 @@ from track_1_short.sampled_softmax import ALL_CANDIDATE_COUNTS
 # The kernel's 8-wide shared-memory and grad stores need P % (BLOCK_SIZE * 8) == 0.
 for _p in ALL_CANDIDATE_COUNTS:
     assert _p % (CE_KERNEL_BLOCK_SIZE * 8) == 0, f"candidate count {_p} is not a legal CE width"
-# P -> the CE kernel compiled at VOCAB_SIZE = P. Built once at import (nvrtc, off the clock), never mutated.
-SAMPLED_CE_KERNELS = {p: compile_ce_kernel(p) for p in ALL_CANDIDATE_COUNTS}
+# P -> the CE kernel compiled at VOCAB_SIZE = P. These are Hopper sm_90
+# kernels; importing them on GB10 would fail before the trainer can select its
+# native BF16/SM121 loss path.
+SAMPLED_CE_KERNELS = ({}
+                      if os.environ.get("GB10_PROFILE") == "1"
+                      else {p: compile_ce_kernel(p) for p in ALL_CANDIDATE_COUNTS})
 
 
 @torch.library.custom_op("nanogpt::sampled_ce_fwd_bwd", mutates_args={"losses", "grad_input"})
@@ -51,6 +56,8 @@ def sampled_ce_fwd_bwd(
 ) -> None:
     """ce_fwd_bwd with the kernel of width P = logits.shape[1]."""
     P = logits.shape[1]
+    if not SAMPLED_CE_KERNELS:
+        raise RuntimeError("Hopper sampled CE is unavailable in GB10_PROFILE; use gb10.loss")
     SAMPLED_CE_KERNELS[P](
         (n_rows, 1, 1),
         (CE_KERNEL_BLOCK_SIZE, 1, 1),

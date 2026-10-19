@@ -1,0 +1,27 @@
+name: GB10 static safety
+on:
+  push:
+    branches: [2xGB10]
+  pull_request:
+    branches: [2xGB10]
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile changed Python sources without running CUDA/Triton
+        run: |
+          python -m compileall -q gb10 track_1_short/model/attention.py track_1_short/model/gpt.py track_1_short/optim/anvil.py track_1_short/distributed.py track_1_short/config.py track_1_short/ngram_table.py track_1_short/sampled_softmax.py track_1_short/data.py
+      - name: Guard against loading sm90 FA3 on GB10
+        run: |
+          grep -q 'None if GB10_NATIVE else load_flash_attn3()' track_1_short/model/attention.py
+          grep -q 'run_selected_tests()' gb10/train.py
+      - name: Install CPU PyTorch for algorithmic reference tests
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Reference attention / MTP CE / MLP backward tests on CPU
+        run: |
+          python -m unittest gb10.test_attention gb10.test_loss gb10.test_model_math gb10.test_graph_attention gb10.test_policy gb10.test_import_guards gb10.test_accel_layout gb10.test_precision -v

@@ -6,12 +6,12 @@ model/gpt.py. FA3 reads the widths unpadded, which needs record #360's patched F
 """
 import hashlib
 import math
+import os
 import pathlib
 from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-from kernels import get_kernel
 from torch import Tensor, nn
 
 from track_1_short.perf.kernels.qkv_rope import PackedFP8QKV, qk_norm_rope_forward
@@ -29,6 +29,7 @@ def load_flash_attn3():
     """The pinned, checksum-verified patched FA3 kernel's flash_attn_interface."""
     # The publisher is a personal Hub account, which kernels>=0.16 does not trust by default. Trust
     # comes instead from the pinned commit and the binary checksum below.
+    from kernels import get_kernel  # H100-only dependency, never imported on GB10
     fa3 = get_kernel(FA3_REPO, revision=FA3_REVISION, trust_remote_code=True)
     binary = next(pathlib.Path(fa3.__file__).parent.glob("_flash_attn3_cuda_*.so"))
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -36,7 +37,9 @@ def load_flash_attn3():
     return fa3.flash_attn_interface
 
 
-flash_attn_interface = load_flash_attn3()
+GB10_NATIVE = os.environ.get("GB10_PROFILE") == "1"
+# The H100-patched FA3 shared object targets sm_90: do NOT load on GB10.
+flash_attn_interface = None if GB10_NATIVE else load_flash_attn3()
 
 
 class Yarn(nn.Module):
@@ -187,13 +190,23 @@ class CausalSelfAttention(nn.Module):
         else:
             # Validation (no_grad): a bf16 projection and the forward norm/rotary kernel.
             qkv_weight = sa_lambdas[0] * torch.cat((qk_w, v_w)).type_as(x)
-            qkv = F.linear(x, qkv_weight)
+            if GB10_NATIVE and self.training:
+                from gb10.fp8_linear import dispatch as gb10_linear
+                qkv = gb10_linear(x, qkv_weight)
+            else:
+                qkv = F.linear(x, qkv_weight)
             qk, v = qkv.split((2 * H * self.qk_dim, H * self.v_dim), dim=-1)
             qk = qk.view(B, T, 2 * H, self.qk_dim)
             v = v.view(B, T, H, self.v_dim)
-            q, k = qk_norm_rope_forward(
-                qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
-            )
+            if GB10_NATIVE:
+                from gb10.attention import qk_norm_rope_reference
+                q, k = qk_norm_rope_reference(
+                    qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
+                )
+            else:
+                q, k = qk_norm_rope_forward(
+                    qk[0], yarn.factor1[:T], yarn.factor2[:T], H, Yarn.ROTARY_DIM, self.paired, key_offset,
+                )
             q, k = q[None], k[None]
         max_len = train_max_seq_len if self.training else self.val_max_seq_len
 
@@ -215,9 +228,13 @@ class CausalSelfAttention(nn.Module):
             max_len = 2 * max_len
 
         # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
-        y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
-                                                        max_seqlen_q=max_len, max_seqlen_k=max_len,
-                                                        causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
+        if GB10_NATIVE:
+            from gb10.fa4 import dispatch
+            y = dispatch(q[0], k[0], v[0], seqlens, bm_size, yarn.attn_scale)
+        else:
+            y = flash_attn_interface.flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
+                                                            max_seqlen_q=max_len, max_seqlen_k=max_len,
+                                                            causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
         y = y.view(B, T, H, self.v_dim)
         # Gated XSA (arXiv:2603.09078) with learnable strength: subtract per-head fraction tanh(α)
         # of y aligned with v̂. Non-paired only (v shape doesn't line up for paired layers).
@@ -231,4 +248,7 @@ class CausalSelfAttention(nn.Module):
         y = y.contiguous().view(B, T, H * self.v_dim) # re-assemble all head outputs side by side
         # The output scale rounds to bf16 in the one product with O, with or without o_gain.
         o_scale = sa_lambdas[1] if attn_args.o_gain is None else sa_lambdas[1] * attn_args.o_gain
+        if GB10_NATIVE and self.training:
+            from gb10.fp8_linear import dispatch as gb10_linear
+            return gb10_linear(y, o_scale * o_w.type_as(y))
         return F.linear(y, o_scale * o_w.type_as(y))
