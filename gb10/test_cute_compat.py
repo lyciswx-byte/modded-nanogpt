@@ -6,9 +6,13 @@ These tests model only API aliasing, not actual GPU compilation.
 """
 import os
 import sys
+import tempfile
+import pathlib
 import types
 import unittest
 from unittest.mock import patch
+
+import torch
 
 from gb10.cute_compat import install_legacy_cute_annotations
 
@@ -72,6 +76,31 @@ class CutlassCompatibilityTests(unittest.TestCase):
              patch.dict(os.environ, {"GB10_FA4_CUTE_COMPAT": "1"}):
             with self.assertRaisesRegex(RuntimeError, "cannot be mapped"):
                 install_legacy_cute_annotations()
+
+    def test_actual_local_bundle_loader_imports_legacy_annotation(self):
+        """Integration-like test with a tiny fake FA4 package, no GPU needed."""
+        from gb10.fa4 import load_fa4
+        modules, classes = fake_cutlass()
+        with tempfile.TemporaryDirectory() as temp:
+            pkg = pathlib.Path(temp) / "build" / "torch-cuda"
+            pkg.mkdir(parents=True)
+            (pkg / "__init__.py").write_text(
+                "from cutlass.cute.core import ThrMma\\n"
+                "def flash_attn_varlen_func(*args, **kwargs):\\n"
+                "    return ThrMma\\n",
+                encoding="utf-8",
+            )
+            load_fa4.cache_clear()
+            with patch.dict(sys.modules, modules), \
+                 patch.dict(os.environ, {
+                     "GB10_FA4_LOCAL_PATH": temp,
+                     "GB10_FA4_CUTE_COMPAT": "1",
+                 }), \
+                 patch.object(torch.cuda, "get_device_capability", return_value=(12, 1)):
+                fn = load_fa4()
+                self.assertIs(fn(), classes["ThrMma"])
+            load_fa4.cache_clear()
+            sys.modules.pop("flash_attn_4_sm120", None)
 
 
 if __name__ == "__main__":
