@@ -71,3 +71,9 @@ Retest with the supplied local bundle used:
 `/media/lycis/data/flash-attn-4-sm120`. The bundle was found, but import failed
 with `AttributeError: cutlass.cute.core has no attribute ThrMma`; FA4 remains
 BLOCKED by a CuTe/CUTLASS dependency mismatch in the container.
+
+Same-host two-rank NCCL probe was also attempted with
+`NCCL_DEBUG=INFO NCCL_SOCKET_IFNAME=enp1s0f1np1 torchrun --standalone --nproc_per_node=2`.
+It **FAIL**ed with `ncclInvalidUsage: Multiple Ranks are using the same
+GPU/Partition`; this is an invalid same-GPU simulation, not a two-node result.
+Real two-node training remains BLOCKED pending a second GB10 host.
