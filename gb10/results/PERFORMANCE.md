@@ -19,6 +19,11 @@ validation only; no bandwidth benchmark was run. With the local FineWeb data mou
 
 This is a smoke result, not a full-run throughput or validation-loss claim.
 
+Follow-up with forced RoCE/IB and RDMA-enabled containers completed the same
+8-step smoke on both nodes. Rank 0 elapsed **12.69 s** with **19.39 GiB**
+allocated at step 8. The measured smoke token budget remains 196,608; this is
+not a full-run speed claim.
+
 The required benchmark commands remain pending on each node:
 
 ```text
