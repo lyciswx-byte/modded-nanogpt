@@ -27,6 +27,163 @@
 - `GB10_CUDA_GRAPHS=1` requires `GB10_ATTN_BACKEND=graph`. CPU file loading, cross-host NCCL, sparse n-gram row exchange, some Adam paths and validation are outside captured graphs. This is **not** one monolithic end-to-end CUDA graph.
 - Default `GB10_NGRAM_ROWS=21150720` and `GB10_BATCH_DIVISOR=16` change the total token budget and quality vs record #92. Do **not** assert historical 39.914s or CE 3.2773 equivalence.
 
+## 1A. IMMEDIATE P0 TASK — investigate and fix FA4 backward diff=1544 (commit 4044024)
+
+**This task takes precedence over the generic tuning sections below.** Start here; do not spend GPU time on Triton Tile speedups or a 1194-step training run while FA4 backward is incorrect.
+
+### Confirm source and exact problem
+
+- Review real commit **\`4044024820702bb61b4dc22c1b345f9ab377c41a\`** with \`git show 4044024 -- gb10/fa4.py gb10/results/CORRECTNESS.md\`. The commit is now available from GitHub. Compare it against the current \`2xGB10\` HEAD; **do not cherry-pick it again or overwrite newer fixes**.
+- That commit changed the **adapter**, not the third-party CuTe backward implementation: \`window_size\` uses CuTe \`Int32\`, \`cute.make_fragment\` maps to \`make_rmem_tensor\`, and the \`nvvm.atomicrmw(res=...)\` wrapper rewrites to \`results=[...]\`. Native FA4 JIT reportedly compiled forward and backward, but \`test_fa4_varlen_mixed_heads_forward_backward\` failed with **maximum backward difference 1544.0**. That is a confirmed failure, **not** an acceptable FP8/BF16 tolerance issue.
+- Read \`gb10/FA4_BACKWARD_DEBUG.md\`, \`gb10/diagnose_fa4_backward.py\`, \`gb10/fa4_masks.py\`, \`gb10/fa4.py\`, \`gb10/cute_compat.py\`, \`gb10/fa4_safebwd.py\`, \`gb10/test_accelerated.py\`, \`gb10/test_fa4_masks.py\`, \`gb10/test_fa4_diagnostics.py\`, and \`gb10/test_fa4_safebwd.py\` **before** editing.
+- **Check out the real third-party bundle** at \`GB10_FA4_LOCAL_PATH\`; note that 4044024 does **not** contain the bundle's \`build/torch-cuda/interface.py\` or its native \`flash_bwd*\` kernel source. Do not pretend that the adapter alone fixes a JIT-compiled backward kernel.
+- The current diagnostic and adapter share \`fa4_mask_kwargs(causal=..., window=...)\`, including typed \`Int32\`. Verify their **actual kernel invocation** and the effective mask after the bundle's own normalization. An upstream FlashAttention finite causal left window may canonicalize to a local \`(left,0)\` mask; do **not** assume \`causal=False\` is the culprit without comparing semantics.
+- **Production default remains \`GB10_ATTN_BACKEND=sdpa\`** and FA4 remains opt-in/fail-closed. Never increase an \`atol/rtol\` threshold to hide an error of 1544, and never silently replace a failed native FA4 test with the \`fa4-safebwd\` diagnostic backend.
+
+### P0-A. Capture reproducible inputs and environment on BOTH GB10 hosts
+
+Perform these read-only checks in the **existing** CUDA/PyTorch ARM64 Docker container, with the locally patched FA4 bundle mounted. Substitute paths only after verifying their existence; do not guess a Git ref or mount location.
+
+\`\`\`bash
+git branch --show-current
+git status --short
+git rev-parse HEAD
+git show --stat --oneline 4044024
+python -m compileall -q gb10 track_1_short
+python -m unittest gb10.test_fa4_masks gb10.test_fa4_diagnostics gb10.test_fa4_safebwd -v
+python - <<'PY'
+import os, platform, torch, triton
+from gb10.cute_compat import cutlass_version
+print("host=",platform.node(),"arch=",platform.machine())
+print("GB10_PROFILE=",os.getenv("GB10_PROFILE"))
+print("GB10_FA4_LOCAL_PATH=",os.getenv("GB10_FA4_LOCAL_PATH"))
+print("torch=",torch.__version__,"torch_cuda=",torch.version.cuda)
+print("triton=",triton.__version__,"cutlass_dsl=",cutlass_version())
+print("cuda_available=",torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("device=",torch.cuda.get_device_name(0))
+    print("capability=",torch.cuda.get_device_capability(0))
+PY
+nvidia-smi
+\`\`\`
+
+Record both nodes' driver, container tag/digest (if visible), bundle git HEAD or exact file hashes, \`interface.py\` and \`flash_bwd*.py\` provenance, \`nvidia-cutlass-dsl\`, \`apache-tvm-ffi\`, \`kernels\`, CUDA, PyTorch, Triton, NCCL and SM121 capability. Redact host IPs, user paths, credentials and authentication tokens before committing logs. **Do not upgrade/downgrade CUDA or CUTLASS as a first response**.
+
+Required environment result: \`gb10/results/FA4_ENVIRONMENT.md\`, with one row per host, source revision, tested flags and whether both hosts used the SAME bundle source.
+
+### P0-B. Run the seven staged diagnostic cases and preserve failures
+
+Run this **on each GB10 separately**, not through a two-rank training job. Use the exact locally patched bundle from the 4044024 JIT test:
+
+\`\`\`bash
+export GB10_PROFILE=1
+export GB10_ATTN_BACKEND=sdpa
+export GB10_CUDA_GRAPHS=0
+export GB10_FA4_LOCAL_PATH=/opt/flash-attn-4-sm120  # first verify actual mount
+mkdir -p gb10/results
+set -o pipefail
+python -m gb10.diagnose_fa4_backward --repeats 3 \
+  --json gb10/results/fa4_backward_node1.json \
+  2>&1 | tee gb10/results/fa4_backward_node1.log
+printf 'FA4_DIAGNOSTIC_EXIT_CODE=%s\n' "$?"
+\`\`\`
+
+Use \`node2\` for the second host's filenames. Run \`gb10.test_accelerated.AcceleratedGB10.test_fa4_varlen_mixed_heads_forward_backward\` separately and record the complete traceback; it is **expected to fail until the native backward is fixed**, and an expected failure is not a PASS:
+
+\`\`\`bash
+python -m unittest \
+  gb10.test_accelerated.AcceleratedGB10.test_fa4_varlen_mixed_heads_forward_backward \
+  -v
+\`\`\`
+
+The isolator tests, **in this order**:
+
+| Case ID | Sequence lengths | QK/V head | Causal | Window | Question |
+|---|---|---|---|---|---|
+| \`dense-noncausal-64\` | 192 | 64/64 | no | full | Is basic backward wrong? |
+| \`dense-causal-64\` | 192 | 64/64 | yes | full | Does triangular masking break it? |
+| \`varlen-causal-64\` | 96,160,64,192 | 64/64 | yes | full | Are packed offsets / scatter wrong? |
+| \`single-window-64\` | 192 | 64/64 | yes | left 128 | Is local/causal window backward wrong? |
+| \`varlen-window-64\` | 96,160,64,192 | 64/64 | yes | left 128 | Does varlen + window interaction fail? |
+| \`varlen-window-mixed\` | 96,160,64,192 | 64/128 | yes | left 128 | Does zero-padding Q/K / V width break it? |
+| \`varlen-window-128\` | 96,160,64,192 | 128/128 | yes | left 128 | Is 128-dim backward layout wrong? |
+
+The diagnostic should attempt **all seven cases even if one fails** and must return a nonzero exit code if ANY case fails; the \`tee\` pipeline must preserve this exit code via \`set -o pipefail\`. In a failure log include any JIT traceback, not just the last line.
+
+For **every case and every repeated run**, extract from JSON the following fields **separately** for \`out\`, \`dq\`, \`dk\`, \`dv\`:
+\`finite\`, \`max_abs\`, \`p99_abs\`, \`rms_relative_to_ref\`, \`ref_rms\`, \`ref_max_abs\`, \`worst_flat_index\`, \`actual_at_worst\` and \`ref_at_worst\`. Also report the repeat-to-repeat gradient metrics from \`repeat_grads\`. Report per-case \`pass\` / \`exception\` and the **first failing case**. Do not collapse dQ/dK/dV to a single maximum of 1544.
+
+Run a separate wide-QK scale test matching record #92: \`--case varlen-window-128 --scale 0.085 --repeats 3\`. The general diagnostic defaults to \`--scale 0.13\` for its first six cases; avoid claiming that its all-cases \`128/128\` configuration alone covers production 0.085.
+
+At minimum, add a deterministic **second seed** for every failing case: if the script does not expose \`--seed\`, add that CLI option, unit-test it on CPU and print/store \`seed\` in each JSON case before claiming multi-seed coverage. Compare \`grad_output=ones\` against seeded random upstream gradients on the first failure to distinguish accumulation errors from mask errors.
+
+### P0-C. Root-cause classification and exact source-level fix
+
+Write one evidence-backed root-cause statement per failed case, naming the **actual third-party source file + function + line number**. Use these rules:
+
+| Observed failure | Audit FIRST |
+|---|---|
+| \`out\` differs | Forward padding, window endpoints, causal/local normalization, head mapping and varlen offsets; **do not blame backward yet** |
+| \`out\` matches, only \`dq\` fails | Softmax LSE, saved forward state, \`dP/dS\`, scale, dQ accumulate/layout and QK slicing |
+| \`out\` matches, only \`dk\`/\`dv\` fails | \`nvvm.atomicrmw(results=...)\` argument/result ABI, FP32 accumulation, zero-init, global addresses, shared-memory layout and races |
+| \`out\` matches, all gradients fail | Backward ABI, grad_output strides/layout, incorrect saved tensors or LSE scale |
+| First failure at causal | Triangular mask / effective \`is_causal\` flag mismatch |
+| First failure at window | \`is_local\`, inclusive left endpoint, right=0, negative-index clipping or typed \`Int32\` JIT specialization |
+| First failure at varlen | \`cu_seqlens\`, segment-local offsets, head/batch flattened indexing or dK/dV scatter |
+| First failure at mixed 64/128 | Padded Q/K zero tail, original scale 0.13, original-shape gradient slicing and per-head layout |
+| Huge errors vary between identical reruns | Suspect uninitialized buffer, missing sync, data race, invalid atomic address or writes outside allocated regions |
+
+Specific \`4044024\` review: the wrapper globally monkeypatches \`nvvm.atomicrmw\` on FA4 load and translates \`res\` to \`results=[...]\`. **Inspect the signature and the call sites of the installed CUTLASS/MLIR version and third-party bundle.** Show whether the caller expects the atomic's old value, FP32 accumulator, or an output container. Do not treat a keyword rename or successful JIT as proof of semantic equivalence. Prefer a narrowly scoped patch inside the vendored/external bundle over unbounded process-global monkeypatching if supported by the environment.
+
+Compare the relevant \`flash_bwd*.py\` / \`interface.py\` lines with the **version-matched** Dao-AILab SM120 path; changing only the wrapper is insufficient if backward JIT logic changed. Validate each fix on one GB10 with the seven-case isolate **before** the other host. If a proposed fix regresses a passing case, reject it.
+
+Acceptance thresholds: do **not** relax \`test_accelerated.py\` forward \`atol=0.085, rtol=0.06\` or native FA4 backward \`atol=0.12, rtol=0.12\`. Require finite output/gradients, all seven cases passing, repeatable results and no materially different errors between nodes. Record actual errors, not just PASS. More detailed RMS thresholds from the isolator are additional gates, not replacements for the existing unit test.
+
+### P0-D. Prove a fix rather than just diagnosing
+
+Once a candidate native FA4 backward patch passes the staged checks, run on **both** devices:
+
+\`\`\`bash
+python -m unittest gb10.test_fa4_masks gb10.test_fa4_diagnostics gb10.test_fa4_safebwd -v
+python -m unittest \
+  gb10.test_accelerated.AcceleratedGB10.test_fa4_varlen_mixed_heads_forward_backward \
+  -v
+python -m unittest gb10.test_accelerated -v
+python -m gb10.bench_accelerators --kind attention --repeats 30
+\`\`\`
+
+Collect per-shape fwd+bwd CUDA-event p50/p90, BF16 reference error, per-rank allocated/reserved GiB, and FA4 versus native SDPA on the **same lengths/windows/heads**. If benchmark code lacks p90, extend it rather than invent the number. **Only after passing these gates** consider a two-node 8-step/128-step FA4 experiment; use the same seeds, token budget and n-gram capacity as the native SDPA baseline. Production remains \`sdpa\` until both-node success and acceptable CE/loss traces; never enable FA4 by changing the default just because JIT works.
+
+\`GB10_ATTN_BACKEND=fa4-safebwd\` is a diagnostic-only bridge: FA4 forward parity-checked against SDPA, but backward recomputed by SDPA. It is **not** a native CuTe backward fix, is likely slower and is incompatible with CUDA Graph capture. If an FA4 fix is still blocked, leave native FA4 disabled, describe the exact failing kernel, and do not claim completion.
+
+### P0-E. MANDATORY RESULT FILES AND FINAL ANSWER FORMAT
+
+Codex **must create or update** the following, even when a failure blocks further work:
+
+1. \`gb10/results/FA4_ENVIRONMENT.md\`: node1/node2 versions, image digest, actual installed CUTLASS & bundle revision/hash, SM121, mounting, source/commit IDs and exact masks/flags.
+2. \`gb10/results/FA4_BACKWARD_DIAGNOSIS.md\`: **seven-row table** with \`out/dq/dk/dv\` max and normalized RMS, first failing case, expected vs actual at worst indices, repeat variance, two seeds, upstream grad type, classification and kernel file:line evidence. Include P0 severity.
+3. \`gb10/results/fa4_backward_node1.json\` and \`fa4_backward_node2.json\` (plus \`.log\` only when suitably scrubbed): outputs of the actual diagnostics. If hardware is inaccessible, write \`BLOCKED\` in the Markdown files and **do not create fake JSON**.
+4. \`gb10/results/FA4_PATCH_REVIEW.md\`: baseline \`4044024\` vs candidate patch, exact CuTe API/ABI changes, diff links, why the semantics are now correct, regressions, PASS/FAIL/BLOCKED and remaining risks.
+5. Update \`gb10/results/CORRECTNESS.md\`, \`gb10/results/PERFORMANCE.md\`, and \`gb10/results/DECISIONS.md\` with a concise status and links; do not overwrite earlier historical evidence.
+
+Required final Chinese report template:
+
+| Field | Mandatory content |
+|---|---|
+| Revision tested | \`2xGB10\` Git SHA, external FA4 source SHA/hash, container digest |
+| Hardware | node1/node2 and installed driver/CUDA/PyTorch/Triton/CUTLASS |
+| First failing scenario | Case ID and \`out/dQ/dK/dV\` values |
+| Reproducibility | seeds, repeats, \`grad_output\` type, stability |
+| Root cause | **specific file:function:line**, evidence, not speculation |
+| Changes | patches, unit tests and exact links |
+| Tests | PASS/FAIL/BLOCKED separately for CPU, GB10 GPU, two-node training |
+| Speed and quality | **measured** fwd+bwd latency, memory, CE only if available |
+| Outstanding actions | exact blockers/commands, no vague promises |
+
+**Done means:** real native SM121 FA4 forward AND backward numerically pass for the #92 mixed-QK/V varlen sliding workload on each GB10, both-node training passes, and performance is measured. A CI-only or diagnostic-bridge-only result is **NOT DONE**. If hardware/bundle sources are unavailable, complete source/CPU work, commit it, and explicitly report \`FA4 backward GPU fix BLOCKED\`.
+
+---
+
 ## 2. Priority P0 — make the 2-node program provably runnable
 
 Implement and demonstrate:
@@ -140,4 +297,4 @@ Write these files (with **measured or BLOCKED** fields):
    - known unresolved correctness risks and actionable next experiments.
 5. A successful run is not merely a green CPU CI: actual two-node GB10 convergence and throughput require separate runtime evidence. If hardware is absent, conclude **`静态/CPU 已验证，GB10 实机验收待完成`**, not `双机移植已完成`.
 
-**First action for Codex:** perform the P0 audit and reproduce the current CI tests before implementing any new SM121 kernel. Then identify the highest-impact provable defect, fix it, add regression coverage, benchmark where possible and continue by the priority gates above.
+**First action for Codex:** execute **Section 1A / 4044024 FA4 backward P0**: verify the actual commit and third-party bundle source, run baseline CPU tests, collect the seven real-SM121 per-tensor diagnostics on both hosts, identify the first failing case, and patch only the proven native backward defect. Only after its gates pass should you resume the generic P0/P1 performance work below. If GPU hardware is unavailable, produce honest BLOCKED artifacts and commit the static/CPU improvements.
