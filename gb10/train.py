@@ -25,6 +25,7 @@ from gb10.eager import EagerStepRunner, NoFp8Refresh
 from gb10.capture import enabled as graphs_enabled, check_graph_configuration, graph_owners, capture_all, prewarm_tiles_if_requested
 from gb10.preflight import check_runtime, memory_plan
 from gb10.policy import validation_windows
+from gb10.token_metrics import global_token_budget, local_tokens_for_step
 from gb10.selftest import run_selected_tests
 from track_1_short.canonical_mask import BackgroundCanonicalMask
 from track_1_short.config import (
@@ -95,6 +96,11 @@ def main():
     def print0(message, console=False):
         if env.master_process:
             print(message, flush=True)
+    expected_global_tokens = global_token_budget(schedule, run_steps)
+    print0(f"[GB10] scheduled global token budget={expected_global_tokens:,}, "
+           f"step0 local tokens={local_tokens_for_step(schedule, 0, env.world_size):,}, "
+           f"GB10_BATCH_DIVISOR={os.environ.get('GB10_BATCH_DIVISOR', '16')}; "
+           "do not multiply global tokens by WORLD_SIZE")
     print0(f"[GB10] 2x sm_121, graphs={graphs_enabled()} "
            f"attn={os.environ.get('GB10_ATTN_BACKEND', 'sdpa')}, "
            f"gram={os.environ.get('GB10_GRAM_BACKEND', 'aten')}, "
@@ -168,14 +174,20 @@ def main():
         mask_builder.start()
     torch.cuda.synchronize()
     t0 = time.perf_counter()
+    completed_global_tokens = 0
     for step in range(run_steps):
         manager.advance_schedule(step)
         gb10_step(manager, runner, prefetch, sampler, batches, gathers,
                   step, model, step + 1 < run_steps)
         averages.tick(step)
+        # batch_size is already GLOBAL; summing by step handles variable
+        # stage shape and avoids treating max local tokens as every-step work.
+        completed_global_tokens += int(schedule.lookup(step)[0].batch_size)
         if (step + 1) % int(os.environ.get("GB10_LOG_EVERY", "25")) == 0 or step + 1 == run_steps:
             torch.cuda.synchronize()
-            print0(f"[GB10] step={step+1}/{run_steps}, elapsed={time.perf_counter()-t0:.2f}s, "
+            print0(f"[GB10] step={step+1}/{run_steps}, "
+                   f"global_tokens={completed_global_tokens:,}, "
+                   f"elapsed={time.perf_counter()-t0:.2f}s, "
                    f"allocated={torch.cuda.memory_allocated()/2**30:.2f}GiB")
     gathers.flush_final()
     if stop:
