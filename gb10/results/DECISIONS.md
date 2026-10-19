@@ -24,3 +24,5 @@
 - Do NOT guess the reason for the third-party FA4 failure: retain chained
   exceptions, gather the actual CuTe traceback and verify dependencies
   on the same GB10 container. No silent SDPA fallback when `fa4` is selected.
+- The supplied local bundle was tested and the exact dependency mismatch is
+  now recorded: the installed CuTe/CUTLASS lacks `cutlass.cute.core.ThrMma`.

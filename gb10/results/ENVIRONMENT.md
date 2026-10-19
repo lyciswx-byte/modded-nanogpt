@@ -11,7 +11,7 @@ through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 | GPU / capability | NVIDIA GB10 / SM121 | BLOCKED |
 | Driver / CUDA runtime | 580.178.04 / CUDA 13.4 | BLOCKED |
 | PyTorch / Triton / NCCL | 2.14.0a0+b2c75dd / 3.8.0 / 2.31.2 | BLOCKED |
-| FA4 / CuTe | BLOCKED | BLOCKED |
+| FA4 / CuTe | Local bundle found; import BLOCKED (`ThrMma` missing) | BLOCKED |
 | ConnectX-7 interface / transport | BLOCKED (not a two-node test) | BLOCKED |
 
 `nvidia-smi` and the CUDA/PyTorch capability probe passed in the container.

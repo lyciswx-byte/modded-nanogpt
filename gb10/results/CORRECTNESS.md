@@ -65,3 +65,9 @@ python -m unittest gb10.test_accelerated.AcceleratedGB10.test_fa4_varlen_mixed_h
 **Do not mark either historical GPU FAIL as PASS until the two commands above
 actually pass inside the original GB10 Docker container.** The GitHub
 Actions CPU suite and source checks cannot certify third-party CuTe execution.
+
+Retest with the supplied local bundle used:
+`GB10_FA4_LOCAL_PATH=/opt/flash-attn-4-sm120` and a Docker bind mount from
+`/media/lycis/data/flash-attn-4-sm120`. The bundle was found, but import failed
+with `AttributeError: cutlass.cute.core has no attribute ThrMma`; FA4 remains
+BLOCKED by a CuTe/CUTLASS dependency mismatch in the container.

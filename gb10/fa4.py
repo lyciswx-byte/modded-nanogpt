@@ -7,6 +7,9 @@ FA4 is opt-in via GB10_ATTN_BACKEND=fa4; baseline remains native SDPA.
 """
 import functools
 import inspect
+import importlib.util
+import os
+import sys
 
 import torch
 import torch.nn.functional as F
@@ -19,6 +22,23 @@ FA4_MODEL = "SecondNatureComputing/flash-attn-4-sm120"
 def load_fa4():
     if torch.cuda.get_device_capability() != (12, 1):
         raise RuntimeError("SM121 FA4 adapter only supports the GB10 compute capability (12, 1)")
+    local_root = os.environ.get("GB10_FA4_LOCAL_PATH")
+    if local_root:
+        package_dir = os.path.join(local_root, "build", "torch-cuda")
+        init_py = os.path.join(package_dir, "__init__.py")
+        if not os.path.isfile(init_py):
+            raise RuntimeError(f"GB10_FA4_LOCAL_PATH has no build/torch-cuda package: {local_root}")
+        spec = importlib.util.spec_from_file_location(
+            "flash_attn_4_sm120", init_py,
+            submodule_search_locations=[package_dir],
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            raise RuntimeError("local SM121 FA4 bundle failed to import") from exc
+        return module.flash_attn_varlen_func
     try:
         from kernels import get_kernel
     except ImportError as exc:
