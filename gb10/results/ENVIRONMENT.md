@@ -2,7 +2,8 @@
 
 Status: **PARTIAL** on 2026-10-18 (America/Goose_Bay).
 
-The repository checkout is on branch `2xGB10`. One local GB10 is available
+The repository checkout is commit `ff98b809e3d8114f690292363d89659fa20a0620`
+on branch `codex/reexecute-ff98`. One local GB10 is available
 through `modded-nanogpt:92-gb10` (NVIDIA Release 26.09).
 
 | Field | Node 0 | Node 1 |

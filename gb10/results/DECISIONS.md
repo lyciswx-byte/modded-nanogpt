@@ -8,8 +8,9 @@
 - Hardware acceptance is deferred until both existing ARM64 CUDA containers
   provide SM121 capability, versions, NCCL transport, and reproducible two-rank
   logs.
-- Do not enable FP8 linear or FA4 defaults: the local GB10 run found FP8
-  projection parity failure and FA4 bundle execution failure.
+- Do not enable FA4 by default: the local GB10 run is blocked by Hugging Face
+  authentication while loading the third-party bundle. Keep FP8 linear opt-in
+  pending two-node convergence evidence.
 - Corrected Triton FP8 masked-load literals and passed the fused FP8 CE
   forward/gradient gate in the current container.
 
