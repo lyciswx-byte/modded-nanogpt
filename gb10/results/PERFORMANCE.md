@@ -40,12 +40,13 @@ token logging before reporting a definitive throughput.
 
 ## Current performance bottlenecks
 
-1. **Socket transport:** the successful two-host AllReduce does not prove
-   the ConnectX-7 RDMA devices are exposed to Docker. New read-only
-   `gb10.fabric` reports both sysfs and `/dev/infiniband` visibility;
-   `GB10_REQUIRE_RDMA_DEVICE=1` fails fast if either side is missing.
-   Even visible devices are NOT proof NCCL selected RDMA; inspect
-   `NCCL_DEBUG=INFO` and `nccl-tests` transport/latency.
+1. **Network transport:** the initial two-host test used `NET/Socket`.
+   A later Codex feedback run explicitly exposed `/dev/infiniband`,
+   selected `NCCL_NET=IB` and the active `rocep1s0f1,roceP2p1s0f1`
+   HCAs; **`NET/IB/0` and `NET/IB/1` were confirmed on both hosts**.
+   Use optional `GB10_ROCE_PROFILE=1` on these measured machines to
+   reproduce that mode, while keeping HCA names configurable. A successful
+   8-step transport smoke does not measure RDMA bandwidth or scaling.
 2. **FA4:** locally available SM120/121 bundle imports fail at
    `cutlass.cute.core.ThrMma` on the container's CUTLASS DSL.
    An opt-in compatibility shim now aliases moved **real** class objects
@@ -68,3 +69,24 @@ GB10_GRAPH_SEGMENT_LOOKUP=fused python -m gb10.bench_graph --tokens 1024 --qk 64
 Then record at least one measured 128-step/two-node baseline, NCCL
 AllToAll and sparse row-prefetch timings, and eventually the full 1194-step
 validation. Compare results only with the same token and table budgets.
+
+## Later Codex RoCE evidence (branch `codex/reexecute-ff98`)
+
+The feedback branch advanced after the first two-node smoke. When Docker
+exposed `/dev/infiniband` and memlock was unlimited, NCCL used
+`NET/IB/0` and `NET/IB/1` with HCA names
+`rocep1s0f1,roceP2p1s0f1`. The two-host 8-step test completed again:
+
+| Configuration | Rank-0 8-step elapsed | GPU allocated at step 8 |
+|---|---:|---:|
+| Earlier transport setup (Socket) | 13.19 s | 19.39 GiB |
+| Explicit RoCE / IB setup | **12.69 s** | **19.39 GiB** |
+
+This is a pair of **individual smoke observations**, not a controlled
+repeated A/B benchmark. No standalone NCCL bandwidth comparison was
+reported; do not infer a robust 3.8% speedup from these samples.
+
+The later feedback repeated the previous **196,608 token estimate**,
+but it still uses the wrong maximum-stage batch figure. Under the source
+defaults the first eight steps have 65,536 global tokens; future runs
+will log their actual effective divisor and cumulative tokens.
