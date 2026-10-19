@@ -15,6 +15,8 @@ jobs:
       - name: Compile changed Python sources without running CUDA/Triton
         run: |
           python -m compileall -q gb10 track_1_short/model/attention.py track_1_short/model/gpt.py track_1_short/optim/anvil.py track_1_short/distributed.py track_1_short/config.py track_1_short/ngram_table.py track_1_short/sampled_softmax.py track_1_short/data.py
+      - name: Verify dual-host launcher shell syntax
+        run: bash -n gb10/run_two_nodes.sh
       - name: Guard against loading sm90 FA3 on GB10
         run: |
           grep -q 'None if GB10_NATIVE else load_flash_attn3()' track_1_short/model/attention.py
