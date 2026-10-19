@@ -486,3 +486,24 @@ pretending RDMA is active.
 
 The two single-run rank0 timings of 13.19s and 12.69s are not an
 end-to-end speedup measurement; see [PERFORMANCE](results/PERFORMANCE.md).
+
+## FA4 backward numerical failure (reported native diff=1544)
+
+The third-party CuTe SM120 backward can JIT-compile yet produce a
+numerically invalid gradient for #92's packed causal sliding-window and
+mixed QK/V workload. **Keep GB10_ATTN_BACKEND=sdpa as the production
+default**. Do not relax tolerance or equate successful compilation with
+correct gradients.
+
+[FA4_BACKWARD_DEBUG.md](FA4_BACKWARD_DEBUG.md) provides a **seven-stage
+on-GPU fault isolator** and a separate, expensive diagnostic backend:
+`GB10_ATTN_BACKEND=fa4-safebwd` computes real FA4 forward, checks
+forward parity and recomputes trustworthy SDPA gradients. It is not a
+fix for the native CuTe backward and cannot run inside CUDA Graph
+capture. A full native fix needs the external bundle's exact source,
+the report from `python -m gb10.diagnose_fa4_backward`, and a GPU retest.
+
+The short SHA `4044024` mentioned in local Codex feedback was not
+reachable from this repository's GitHub refs when this diagnostic was
+written. These changes are isolated utilities and **do not overwrite**
+that unpushed patch.
