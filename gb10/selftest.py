@@ -9,8 +9,11 @@ import unittest
 
 def run_selected_tests():
     selected = []
-    if os.environ.get("GB10_ATTN_BACKEND", "sdpa") in ("fa4", "hybrid"):
+    attention_backend = os.environ.get("GB10_ATTN_BACKEND", "sdpa")
+    if attention_backend in ("fa4", "hybrid"):
         selected.append("test_fa4_varlen_mixed_heads_forward_backward")
+    if attention_backend == "fa4-safebwd":
+        selected.append("test_fa4_forward_sdpa_backward_debug_mode")
     if os.environ.get("GB10_FP8_LINEAR", "0") == "1":
         selected.append("test_fp8_projection_and_grads")
     if os.environ.get("GB10_FUSED_FP8_CE", "0") == "1":
