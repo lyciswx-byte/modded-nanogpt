@@ -10,6 +10,7 @@ GB10 has warp MMA but not SM100's tcgen05/TMEM. Performance depends on the
 installed sm_121-enabled cuBLASLt/torch stack: benchmark on both GB10s.
 """
 import torch
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -38,6 +39,34 @@ def quantize_e4m3(x):
     return out,scale
 
 
+def prepare_fp8_gemm_input(x, alignment=16):
+    """Pad the flattened M dimension, preserving input gradients via slicing.
+
+    sm_121 cuBLASLt FP8 has more restrictive alignment than BF16 GEMM.
+    A short training/eval slab or ragged microbatch may have M=65/127/etc.
+    Padded rows are trimmed after GEMM; torch's autograd Function computes
+    gradients on the original unpadded tensors.
+    """
+    if x.ndim != 2:
+        raise ValueError("FP8 GEMM input must be [M,K]")
+    if alignment < 1 or (alignment & (alignment - 1)):
+        raise ValueError("alignment must be a positive power of two")
+    rows = x.shape[0]
+    padded_rows = (rows + alignment - 1) // alignment * alignment
+    return F.pad(x, (0, 0, 0, padded_rows - rows)), rows
+
+
+def column_major_rhs(quantized_weight):
+    """For W[out,in] row-major, W.T[in,out] is column-major.
+
+    IMPORTANT: do not call contiguous() on the transpose: that converts the
+    B operand to row-major and may reject/slow sm_121 cuBLASLt FP8 GEMM.
+    """
+    if quantized_weight.ndim != 2:
+        raise ValueError("weight must be rank 2")
+    return quantized_weight.transpose(0, 1)
+
+
 class _Fp8Linear(torch.autograd.Function):
     @staticmethod
     def forward(ctx,x,weight):
@@ -45,14 +74,18 @@ class _Fp8Linear(torch.autograd.Function):
         assert x.dtype == weight.dtype == torch.bfloat16
         assert x.size(-1)==weight.shape[-1] and x.size(-1)%16==0
         x2=x.reshape(-1,x.shape[-1]).contiguous()
+        x2_padded, original_rows = prepare_fp8_gemm_input(x2)
         w=weight.contiguous()
-        xq,sx=quantize_e4m3(x2)
+        xq,sx=quantize_e4m3(x2_padded)
         wq,sw=quantize_e4m3(w)
+        rhs=column_major_rhs(wq)
         try:
             output=torch._scaled_mm(
-                xq,wq.T.contiguous(),out_dtype=torch.bfloat16,
-                scale_a=sx,scale_b=sw,use_fast_accum=False,
+                xq, rhs, out_dtype=torch.bfloat16,
+                scale_a=sx.reshape(1,1), scale_b=sw.reshape(1,1),
+                use_fast_accum=False,
             )
+            output=output[:original_rows]
         except Exception as exc:
             raise RuntimeError(
                 "sm_121 FP8 GEMM unavailable; disable GB10_FP8_LINEAR or "
