@@ -22,6 +22,8 @@ def check_runtime():
         raise RuntimeError("Installed PyTorch build cannot use BF16 on GB10")
     if not torch.distributed.is_nccl_available():
         raise RuntimeError("Installed PyTorch has no NCCL support")
+    from gb10.fabric import report_fabric
+    report_fabric()  # read-only; an RDMA device does not guarantee NCCL uses it
     print(f"[GB10 preflight] host={socket.gethostname()}, torch={torch.__version__}, "
           f"torch_cuda={torch.version.cuda}, CC={cap}, "
           f"NCCL_IF={os.environ.get('NCCL_SOCKET_IFNAME', '(automatic)')}", flush=True)
